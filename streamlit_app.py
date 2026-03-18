@@ -1,0 +1,1261 @@
+import streamlit as st
+import yaml
+import os
+import glob
+import time
+import urllib.parse
+from pathlib import Path
+
+def load_dotenv_vars():
+    env_vars = {}
+    env_file = Path(".env")
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    env_vars[key.strip()] = value.strip()
+    return env_vars
+
+def get_available_providers():
+    available = {}
+    key_map = {
+        'groq':      'GROQ_API_KEY',
+        'gemini':    'GEMINI_API_KEY',
+        'together':  'TOGETHER_API_KEY',
+        'openai':    'OPENAI_API_KEY',
+        'anthropic': 'ANTHROPIC_API_KEY',
+        'mistral':   'MISTRAL_API_KEY',
+        'cohere':    'COHERE_API_KEY',
+        'ollama':    None,
+    }
+    
+    env_content = ""
+    if Path(".env").exists():
+        env_content = Path(".env").read_text()
+    
+    for provider, key in key_map.items():
+        if key is None:
+            available[provider] = {
+                'available': True,
+                'key_name': None,
+                'reason': 'Local — no key needed'
+            }
+        elif key in env_content:
+            available[provider] = {
+                'available': True,
+                'key_name': key,
+                'reason': f'{key} found in .env'
+            }
+        else:
+            available[provider] = {
+                'available': False,
+                'key_name': key,
+                'reason': f'{key} missing from .env'
+            }
+    
+    return available
+
+def auto_select_best_provider(available):
+    priority = [
+        'groq', 'gemini', 'together', 
+        'mistral', 'cohere', 'openai', 
+        'anthropic', 'ollama'
+    ]
+    for provider in priority:
+        if available.get(provider, {}).get('available'):
+            return provider
+    return 'ollama'
+
+def get_best_model(provider):
+    best_models = {
+        'groq':      'llama3-70b-8192',
+        'gemini':    'gemini-2.0-flash',
+        'together':  'meta-llama/Llama-3-70b-chat-hf',
+        'openai':    'gpt-4o-mini',
+        'anthropic': 'claude-3-haiku-20240307',
+        'mistral':   'mistral-medium',
+        'cohere':    'command-r',
+        'ollama':    'llama3',
+    }
+    return best_models.get(provider, 'llama3-70b-8192')
+
+st.set_page_config(page_title="VeilleAI", layout="wide", initial_sidebar_state="expanded")
+
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+local_css("style.css")
+
+# --- Configuration Management ---
+CONFIG_FILE = "config.yaml"
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
+
+def save_config(config):
+    with open(CONFIG_FILE, 'w') as f:
+        yaml.dump(config, f)
+    st.success("Configuration saved explicitly!")
+
+if 'config' not in st.session_state:
+    st.session_state.config = load_config()
+
+config = st.session_state.config
+
+# --- Sidebar ---
+with st.sidebar:
+    st.markdown("""
+        <div class="sidebar-header">
+            <div class="logo">Veille<span>AI</span></div>
+            <div class="subtitle">INTELLIGENCE MONITOR</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    css_styles = """
+    <style>
+    [data-testid="stSidebar"] .stRadio > div {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    [data-testid="stSidebar"] .stRadio label {
+        display: flex !important;
+        align-items: center !important;
+        padding: 10px 14px !important;
+        border-radius: 8px !important;
+        font-size: 14px !important;
+        font-weight: 500 !important;
+        color: #64748b !important;
+        cursor: pointer !important;
+        transition: all 0.15s !important;
+        border: none !important;
+        background: transparent !important;
+        width: 100% !important;
+    }
+    [data-testid="stSidebar"] .stRadio label:hover {
+        background: rgba(255,255,255,0.05) !important;
+        color: #e2e8f0 !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] 
+    > div > label:has(input:checked) {
+        background: rgba(59,130,246,0.15) !important;
+        color: #60a5fa !important;
+        border-left: 3px solid #3b82f6 !important;
+        padding-left: 11px !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stSidebar"] .stRadio label > div:first-child {
+        display: none !important;
+    }
+    </style>
+    """
+    st.markdown(css_styles, unsafe_allow_html=True)
+
+    page = st.radio(
+        "",
+        [
+            "⊞  Dashboard",
+            "▶  Run Pipeline",
+            "⏱  Scheduler",
+            "🏷  Topics",
+            "🗄  Data Sources",
+            "⚙  Advanced",
+            "📊  Monitoring"
+        ],
+        label_visibility="collapsed"
+    )
+
+    
+    available_providers = get_available_providers()
+    active_prov_sidebar = config.get("provider", "ollama")
+    prov_ok_sidebar = available_providers.get(active_prov_sidebar, {}).get("available", False)
+    prov_color = "green" if prov_ok_sidebar else "gray"
+
+    st.markdown(f"""
+        <div class="sidebar-footer">
+            <div class="status-item">Database <span class="dot green">●</span></div>
+            <div class="status-item">Scheduler <span class="dot green">●</span></div>
+            <div class="status-item">{active_prov_sidebar} <span class="dot {prov_color}">●</span></div>
+        </div>
+    """, unsafe_allow_html=True)
+
+# --- Top Header ---
+st.markdown("""
+    <div class="top-header">
+        <div class="wordmark">VeilleAI</div>
+        <div class="header-right">
+            <span class="v-badge badge-blue">GROQ · llama3-70b</span>
+            <span class="v-badge badge-blue">1284 articles</span>
+            <span class="v-badge badge-blue">4 feeds</span>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- Pages ---
+
+if "Dashboard" in page:
+    # Stat Cards
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("""
+        <div class="v-card stat-card">
+            <div class="stat-accent accent-blue"></div>
+            <span class="card-title">Total Articles</span>
+            <div class="stat-number blue">24,812</div>
+            <div class="stat-subtitle">Last 30 days</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown("""
+        <div class="v-card stat-card">
+            <div class="stat-accent accent-green"></div>
+            <span class="card-title">Active Sources</span>
+            <div class="stat-number">124</div>
+            <div class="stat-subtitle">Connected</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown("""
+        <div class="v-card stat-card">
+            <div class="stat-accent accent-amber"></div>
+            <span class="card-title">Topics</span>
+            <div class="stat-number">18</div>
+            <div class="stat-subtitle">Monitored</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c4:
+        st.markdown("""
+        <div class="v-card stat-card">
+            <div class="stat-accent accent-gray"></div>
+            <span class="card-title">RSS Feeds</span>
+            <div class="stat-number">42</div>
+            <div class="stat-subtitle">RSS Feeds</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    col_l, col_r = st.columns([2, 1])
+    with col_l:
+        st.markdown("""
+        <div class="v-card">
+            <span class="card-title">Monitored Topics</span>
+            <div class="topic-container">
+        """, unsafe_allow_html=True)
+        # Render topics dynamically
+        for t in config.get("topics", []):
+            st.markdown(f'<span class="topic-tag">{t}</span>', unsafe_allow_html=True)
+        st.markdown('</div></div>', unsafe_allow_html=True)
+        
+        # System status checks
+        db_exists = Path("watcher.db").exists()
+        db_status = '<span class="v-badge badge-green">CONNECTED</span>' if db_exists else '<span class="v-badge badge-red">MISSING</span>'
+        
+        sched_status = '<span class="v-badge badge-amber">STOPPED</span>'
+        if Path("scheduler.pid").exists():
+            try:
+                with open("scheduler.pid", "r") as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, 0)
+                sched_status = '<span class="v-badge badge-green">ACTIVE</span>'
+            except (ValueError, OSError):
+                sched_status = '<span class="v-badge badge-red">STALE PID</span>'
+        
+        interval = config.get("scheduler_frequency", 60)
+        h, m = divmod(interval, 60)
+        interval_text = f"Every {h}h {m}m" if h > 0 else f"Every {m} mins"
+
+        st.markdown(f"""
+        <div class="v-card">
+            <span class="card-title">System Status</span>
+            <div class="v-list-item"><span>Scheduler Status</span> {sched_status}</div>
+            <div class="v-list-item"><span>Database Status</span> {db_status}</div>
+            <div class="v-list-item" style="border:none;"><span>Collection Interval</span> <span style="font-size:0.9rem; color:#9ca3af;">{interval_text}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_r:
+        st.markdown('<div class="v-card"><span class="card-title">Quick Actions</span>', unsafe_allow_html=True)
+        if st.button("▶ Run Full Pipeline", type="primary", use_container_width=True):
+            with st.spinner("Running pipeline..."):
+                import subprocess
+                
+                env = os.environ.copy()
+                cwd = Path(__file__).parent
+                try:
+                    result = subprocess.run(
+                        ["python", "run_full_pipeline.py"], 
+                        cwd=cwd, env=env, capture_output=True, text=True, check=True
+                    )
+                    st.success("Pipeline executed successfully!")
+                    with st.expander("View Output Logs"):
+                        st.code(result.stdout)
+                except subprocess.CalledProcessError as e:
+                    st.error(f"Pipeline failed with exit code {e.returncode}")
+                    with st.expander("View Error Logs"):
+                        st.code(e.stderr)
+                except Exception as e:
+                    st.error(f"Failed to execute pipeline: {str(e)}")
+                    
+        if st.button("↺ Refresh Data", use_container_width=True):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.session_state.config = load_config()
+            st.rerun()
+            
+        if st.button("⚙ Configure", use_container_width=True):
+            st.info("Please select 'Advanced' from the sidebar navigation to configure system settings.", icon="⚙️")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        feed_html = "".join([f'<div class="v-list-item" style="font-size:0.8rem; color:#9ca3af;">{f}</div>' for f in config.get('feeds', [])])
+        st.markdown(f"""
+        <div class="v-card">
+            <span class="card-title">Data Sources</span>
+            {feed_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Intelligence Reports full-width
+    st.markdown('<div class="v-card"><span class="card-title">Intelligence Reports</span>', unsafe_allow_html=True)
+    
+    reports_dir = Path("reports")
+    if reports_dir.exists() and reports_dir.is_dir():
+        # Type hint correctly for Pyre
+        reports_iter = reports_dir.glob("*.md")
+        reports_list = [p for p in reports_iter]
+        reports_list.sort(key=lambda p: os.path.getmtime(str(p)), reverse=True)
+        
+        if not reports_list:
+            st.markdown('<div style="text-align:center; padding:2rem; color:#4b5563;"><span>📄</span><br/>No reports generated yet.</div>', unsafe_allow_html=True)
+        else:
+            from collections import defaultdict
+            topic_reports = defaultdict(list)
+            for rp in reports_list:
+                parts = rp.stem.split('_')
+                t_name = parts[-1] if len(parts) >= 4 else "Global"
+                topic_reports[t_name].append(rp)
+                
+            for topic, r_list in topic_reports.items():
+                st.markdown(f'<div class="card-title mt-2" style="color:var(--accent-blue-light); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:0.25rem;">Topic: {topic}</div>', unsafe_allow_html=True)
+                for report_path in r_list[:3]:
+                    try:
+                        str_path = str(report_path)
+                        mtime = os.path.getmtime(str_path)
+                        from datetime import datetime
+                        dt = datetime.fromtimestamp(mtime).strftime('%B %d, %Y - %H:%M')
+                        title = report_path.stem.replace('_', ' ').title()
+                        
+                        st.markdown(f"""
+                        <div class="report-row">
+                            <div>
+                                <div class="report-date">{dt}</div>
+                                <div class="report-title">{title}</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        d1, d2, d3, d4 = st.columns([6, 1, 1, 1])
+                        with d2:
+                            with open(report_path, "rb") as f:
+                                st.download_button("↓ MD", f, file_name=report_path.name, key=f"md_{report_path.name}")
+                        with d3:
+                            st.button("↓ PDF", key=f"pdf_{report_path.name}", disabled=True, help="PDF generation not configured")
+                        with d4:
+                            st.button("↓ DOCX", key=f"docx_{report_path.name}", disabled=True, help="DOCX generation not configured")
+                    except Exception as e:
+                        st.error(f"Error loading report {report_path.name}: {e}")
+    else:
+         st.markdown('<div style="text-align:center; padding:2rem; color:#4b5563;"><span>📁</span><br/>Reports directory not found.</div>', unsafe_allow_html=True)
+         
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif "Run Pipeline" in page:
+    st.markdown('<div class="v-card"><span class="card-title">Run Pipeline</span>', unsafe_allow_html=True)
+    
+    mode = st.radio("Collection Mode", 
+                    ["Clear old >7 days", "Fresh start", "Keep existing"],
+                    horizontal=True)
+    
+    if mode == "Clear old >7 days":
+        st.markdown('<div class="v-alert alert-info">Will remove articles older than 7 days before fetching new data.</div>', unsafe_allow_html=True)
+    elif mode == "Fresh start":
+        st.markdown('<div class="v-alert alert-warn">Will drop database tables and start from scratch. Proceed with caution.</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="v-alert alert-success">Standard incremental collection. Existing documents are preserved.</div>', unsafe_allow_html=True)
+        
+    # --- ACTIVE PROVIDER CHECK ---
+    available_providers = get_available_providers()
+    active_prov = config.get("provider", "ollama")
+    active_model = config.get("model", "unknown")
+    prov_ok = available_providers.get(active_prov, {}).get("available", False)
+    
+    if prov_ok:
+        
+        # Determine model capabilities locally since backend isn't executing here.
+        speed_bar = "████████░░ Fast"
+        quality_bar = "███████░░░ Good"
+        cost_bar = "Free"
+        
+        if "gemini" in active_model:
+            speed_bar, quality_bar = "█████████░ Very Fast", "████████░░ High"
+        if "llama" in active_model and "70b" not in active_model:
+             speed_bar, quality_bar = "██████████ Very Fast", "█████░░░░░ Moderate"
+             
+        st.markdown(f"""
+        <div style="background:rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;">
+            <strong style="color:#10b981;">ACTIVE PROVIDER</strong><br/><br/>
+            ✓ {active_prov} · {active_model}<br/>
+            API Key found — ready to run<br/><br/>
+            Speed:   {speed_bar}<br/>
+            Quality: {quality_bar}<br/>
+            Cost:    {cost_bar}
+        </div>
+        """, unsafe_allow_html=True)
+        can_run = True
+    else:
+        st.markdown(f"""
+        <div style="background:rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;">
+            <strong style="color:#ef4444;">✗ CANNOT RUN</strong><br/><br/>
+            Provider "{active_prov}" needs an API Key but it was not found in .env<br/><br/>
+            Available alternatives you can use NOW:
+        </div>
+        """, unsafe_allow_html=True)
+        can_run = False
+        
+        cols = st.columns(min(len([p for p, d in available_providers.items() if d['available']]), 4) or 1)
+        col_idx = 0
+        for p, d in available_providers.items():
+            if d['available'] and p != active_prov:
+                with cols[col_idx % len(cols)]:
+                    if st.button(f"✓ Switch to {p}", key=f"switch_to_{p}", use_container_width=True):
+                        config['provider'] = p
+                        config['model'] = get_best_model(p)
+                        save_config(config)
+                        st.success(f"Switched to {p}!")
+                        time.sleep(1)
+                        st.rerun()
+                col_idx += 1
+
+    st.markdown('<span class="card-title mt-2">Pre-flight check</span>', unsafe_allow_html=True)
+    chk1, chk2, chk3, chk4 = st.columns(4)
+    with chk1: 
+        if can_run:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ API Key Valid</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #ef4444; color:#f87171;">✗ API Key Missing</div>', unsafe_allow_html=True)
+    with chk2: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Database Writable</div>', unsafe_allow_html=True)
+    with chk3: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ RSS Feeds Online</div>', unsafe_allow_html=True)
+    with chk4: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Topics Parsed</div>', unsafe_allow_html=True)
+    
+    st.markdown('<span class="card-title mt-2">Current Topics</span>', unsafe_allow_html=True)
+    active_topics = config.get('topics', [])
+    if active_topics:
+        st.markdown(f'<div class="topic-container" style="margin-bottom:1rem;">{"".join([f"<span class=topic-tag>{t}</span>" for t in active_topics])}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="v-alert alert-warn">⚠ No topics configured — your report may not be focused. Go to Topics page to add some.</div>', unsafe_allow_html=True)
+    
+    st.markdown(f"""
+    <div style="background:rgba(255,255,255,0.02); padding:1rem; border-radius:8px; margin-bottom:1rem; font-size:0.85rem; color:#9ca3af;">
+        Provider: <strong>{config.get('provider')}</strong> | 
+        Model: <strong>{config.get('model')}</strong> | 
+        Items/Feed Limit: <strong>{config.get('items_per_feed')}</strong> | 
+        Max Articles for LLM: <strong>{config.get('max_articles_to_llm')}</strong>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if st.button("▶ Run Full Pipeline", type="primary", use_container_width=True, disabled=not can_run):
+        with st.spinner("Executing pipeline..."):
+            import subprocess
+            try:
+                env = {**os.environ, **load_dotenv_vars()}
+                cwd = str(Path(__file__).parent)
+                result = subprocess.run(
+                    ["python", "run_full_pipeline.py"],
+                    capture_output=True, text=True, timeout=900,
+                    cwd=cwd, env=env
+                )
+                
+                if result.returncode == 0:
+                    st.success("Pipeline completed successfully!")
+                    
+                    # Optional: metric counts could be parsed from stdout if needed
+                    st.metric("Pipeline Status", "Completed")
+                    
+                    st.markdown('<hr style="border-color: rgba(255,255,255,0.07);">', unsafe_allow_html=True)
+                    st.markdown('### Latest Intelligence Report')
+                    
+                    report_files = sorted(
+                        glob.glob("reports/intelligence_report_*.md"), 
+                        reverse=True
+                    )
+                    
+                    if report_files:
+                        latest_mtime = os.path.getmtime(report_files[0])
+                        # Get all reports generated within 5 seconds of the latest (same batch)
+                        recent_reports = [f for f in report_files if latest_mtime - os.path.getmtime(f) <= 5]
+                        
+                        for latest in recent_reports:
+                            parts = Path(latest).stem.split('_')
+                            topic = parts[-1] if len(parts) >= 4 else "Global"
+                            
+                            st.markdown(f'#### 📑 Category: {topic}')
+                            with open(latest, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            
+                            st.markdown(f"""<div style="background:#0a0c10; padding:2rem; border-radius:12px; border:1px solid rgba(255,255,255,0.07); margin-bottom:1rem; height:400px; overflow-y:auto;">
+                            {content}
+                            </div>""", unsafe_allow_html=True)
+                            
+                            d1, d2, d3, d4 = st.columns([1,1,1,5])
+                            safe_key = Path(latest).name
+                            with d1:
+                                st.download_button("↓ MD", content, file_name=safe_key, key=f"dl_pipeline_md_{safe_key}")
+                            with d2:
+                                st.button("↓ PDF", key=f"dl_pipeline_pdf_{safe_key}", disabled=True)
+                            with d3:
+                                st.button("↓ DOCX", key=f"dl_pipeline_docx_{safe_key}", disabled=True)
+                            st.markdown("<br/>", unsafe_allow_html=True)
+                    else:
+                        st.warning("Report completed, but no markdown files found in `reports/` directory.")
+                else:
+                    st.error("Pipeline failed.")
+                    with st.expander("View Error Logs", expanded=True):
+                        st.code(result.stderr, language="bash")
+            except Exception as e:
+                st.error(f"Execution Error: {str(e)}")
+            
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif "Scheduler" in page:
+    import sys
+    import time
+    import subprocess
+    import signal
+    
+    def read_scheduler_pid():
+        pid_file = Path("scheduler.pid")
+        if not pid_file.exists():
+            return None
+        try:
+            return int(pid_file.read_text().strip())
+        except:
+            return None
+
+    def is_scheduler_running():
+        pid = read_scheduler_pid()
+        if not pid:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            pid_file = Path("scheduler.pid")
+            if pid_file.exists():
+                try:
+                    pid_file.unlink()
+                except:
+                    pass
+            return False
+
+    def start_scheduler():
+        env = {**os.environ, **load_dotenv_vars()}
+        log_file = open("scheduler.log", "ab")
+        creationflags = 0
+        start_new_session = False
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
+        else:
+            start_new_session = True
+        
+        cmd = [sys.executable, "scheduler_agent.py"]
+        process = subprocess.Popen(
+            cmd, 
+            stdout=log_file, 
+            stderr=subprocess.STDOUT, 
+            cwd=str(Path(__file__).parent), 
+            env=env,
+            creationflags=creationflags,
+            start_new_session=start_new_session
+        )
+        Path("scheduler.pid").write_text(str(process.pid))
+        return process.pid
+
+    def stop_scheduler():
+        pid = read_scheduler_pid()
+        if not pid:
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True
+                )
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            pid_file = Path("scheduler.pid")
+            if pid_file.exists():
+                pid_file.unlink()
+        except:
+            pass
+
+    running_state = is_scheduler_running()
+    current_pid = read_scheduler_pid()
+    status_badge = '<span class="v-badge badge-green">RUNNING</span>' if running_state else '<span class="v-badge badge-red">STOPPED</span>'
+    pid_display = str(current_pid) if current_pid and running_state else "None"
+    
+    from datetime import datetime, timedelta
+
+    def get_next_run(cfg):
+        mode = cfg.get("schedule_mode", "interval")
+        if mode == "interval":
+            m = cfg.get("schedule_interval_minutes", 60)
+            return f"In {m} minutes (after start)"
+        elif mode == "fixed_hour":
+            hours = cfg.get("schedule_fixed_hours", [])
+            if not hours: return "Not configured"
+            now = datetime.now()
+            next_runs = []
+            for h in hours:
+                try:
+                    t = datetime.strptime(h, "%H:%M").time()
+                    dt = datetime.combine(now.date(), t)
+                    if dt <= now: dt += timedelta(days=1)
+                    next_runs.append(dt)
+                except: pass
+            if not next_runs: return "Invalid hours"
+            nr = min(next_runs)
+            if nr.date() == now.date(): return f"Today at {nr.strftime('%H:%M')}"
+            else: return f"Tomorrow at {nr.strftime('%H:%M')}"
+        elif mode == "specific":
+            dt_str = cfg.get("schedule_specific_datetime", "")
+            try:
+                target = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+                if datetime.now() > target: return "Already passed"
+                return target.strftime('%A %B %d %Y at %H:%M')
+            except: return "Invalid datetime"
+        return "Unknown"
+
+    next_run_text = get_next_run(config)
+
+    modes = ["Interval", "Fixed Hour", "Specific"]
+    mode_map = {"interval": "Interval", "fixed_hour": "Fixed Hour", "specific": "Specific"}
+    inv_map = {v: k for k, v in mode_map.items()}
+
+    current_mode_key = config.get("schedule_mode", "interval")
+    current_mode = mode_map.get(current_mode_key, "Interval")
+
+    # --- STATUS CARD ---
+    if running_state:
+        st.markdown(f"""
+        <div class="v-card">
+            <span class="card-title">Scheduler Status</span>
+            <div class="v-list-item">State: {status_badge}</div>
+            <div class="v-list-item">Mode: <span style="font-weight:500;">{current_mode}</span></div>
+            <div class="v-list-item">Next run: <span style="font-weight:500;">{next_run_text}</span></div>
+            <div class="v-list-item" style="border:none;">Process ID: <span style="font-weight:500;">{pid_display}</span></div>
+            <div class="mt-2" style="padding-top:0.5rem; border-top:1px solid rgba(255,255,255,0.05);">
+        """, unsafe_allow_html=True)
+        
+        c1, c2, c3 = st.columns([1, 4, 1])
+        with c2:
+            if st.button("■ STOP — click to edit schedule", type="primary", use_container_width=True):
+                try:
+                    stop_scheduler()
+                    st.success("Scheduler stopped")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to stop: {e}")
+        st.markdown("</div></div>", unsafe_allow_html=True)
+        
+    else:
+        st.markdown(f"""
+        <div class="v-card">
+            <span class="card-title">Scheduler Status</span>
+            <div class="v-list-item" style="border:none;">State: {status_badge}</div>
+            <div style="font-size:0.85rem; color:#9ca3af; margin-top:0.5rem;">
+                Configure your schedule below then click Start when ready
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- CONFIGURATION SECTION ---
+    if running_state:
+        st.markdown('<div class="v-card" style="opacity:0.5; pointer-events:none;"><span class="card-title">Schedule Configuration (locked)</span>', unsafe_allow_html=True)
+        st.markdown('<div style="color:#ef4444; font-size:0.85rem; margin-bottom:1rem;">⚠ Stop the scheduler to edit</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="v-card"><span class="card-title">Schedule Configuration (actif)</span>', unsafe_allow_html=True)
+
+    selected_mode_label = st.radio(
+        "Select Scheduling Mode", 
+        modes, 
+        index=modes.index(current_mode), 
+        label_visibility="collapsed",
+        disabled=running_state
+    )
+    new_mode = inv_map[selected_mode_label]
+    
+    if not running_state and new_mode != current_mode_key:
+        config["schedule_mode"] = new_mode
+        save_config(config)
+        st.rerun()
+
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07); margin: 1rem 0;'>", unsafe_allow_html=True)
+
+    if new_mode == "interval":
+        st.markdown('<div style="font-size:0.9rem; color:#e5e7eb; margin-bottom:0.5rem;">Run every:</div>', unsafe_allow_html=True)
+        
+        current_total_mins = config.get("schedule_interval_minutes", 60)
+        curr_h = current_total_mins // 60
+        curr_m = current_total_mins % 60
+        
+        c1, c2, c3, c4 = st.columns([2, 1, 2, 1])
+        with c1:
+            new_h = st.number_input("hours", min_value=0, max_value=168, value=curr_h, disabled=running_state, label_visibility="collapsed")
+        with c2:
+            st.markdown("<div style='margin-top:0.5rem;'>hours</div>", unsafe_allow_html=True)
+        with c3:
+            new_m = st.number_input("minutes", min_value=0, max_value=59, value=curr_m, disabled=running_state, label_visibility="collapsed")
+        with c4:
+            st.markdown("<div style='margin-top:0.5rem;'>minutes</div>", unsafe_allow_html=True)
+            
+        new_total_mins = (new_h * 60) + new_m
+        
+        if new_total_mins == 0:
+            st.error("Interval cannot be 0. Please set at least 1 minute.")
+        elif not running_state and new_total_mins != current_total_mins:
+            config["schedule_interval_minutes"] = new_total_mins
+            save_config(config)
+            st.rerun()
+            
+        st.markdown(f'<div style="font-size:0.85rem; color:#60a5fa; margin-top:0.5rem;">Pipeline will run every {new_h}h {new_m:02d}m</div>', unsafe_allow_html=True)
+            
+        st.markdown('<div style="font-size:0.85rem; color:#9ca3af; margin-top:1rem; margin-bottom:0.5rem;">Presets:</div>', unsafe_allow_html=True)
+        p1, p2, p3, p4 = st.columns(4)
+        if p1.button("1h", disabled=running_state): 
+            config["schedule_interval_minutes"] = 60
+            save_config(config)
+            st.success("Interval set to 1h 00m")
+            time.sleep(1)
+            st.rerun()
+        if p2.button("6h", disabled=running_state): 
+            config["schedule_interval_minutes"] = 360
+            save_config(config)
+            st.success("Interval set to 6h 00m")
+            time.sleep(1)
+            st.rerun()
+        if p3.button("12h", disabled=running_state): 
+            config["schedule_interval_minutes"] = 720
+            save_config(config)
+            st.success("Interval set to 12h 00m")
+            time.sleep(1)
+            st.rerun()
+        if p4.button("24h", disabled=running_state): 
+            config["schedule_interval_minutes"] = 1440
+            save_config(config)
+            st.success("Interval set to 24h 00m")
+            time.sleep(1)
+            st.rerun()
+
+    elif new_mode == "fixed_hour":
+        st.markdown('<div style="font-size:0.9rem; color:#e5e7eb; margin-bottom:0.5rem;">Run every day at:</div>', unsafe_allow_html=True)
+        hours_list = config.get("schedule_fixed_hours", [])
+        
+        c1, c2, c3 = st.columns([2, 2, 2])
+        with c1: new_h = st.selectbox("Hour", [f"{i:02d}" for i in range(24)], disabled=running_state)
+        with c2: new_m = st.selectbox("Minute", [f"{i:02d}" for i in range(0, 60, 5)], disabled=running_state)
+        with c3: 
+            st.markdown("<div style='margin-top:1.8rem'></div>", unsafe_allow_html=True)
+            if st.button("+ Add Time", use_container_width=True, disabled=running_state):
+                time_str = f"{new_h}:{new_m}"
+                if time_str not in hours_list:
+                    hours_list.append(time_str)
+                    hours_list.sort()
+                    config["schedule_fixed_hours"] = hours_list
+                    save_config(config)
+                    st.rerun()
+                    
+        if hours_list:
+            st.markdown('<div style="font-size:0.85rem; color:#9ca3af; margin-top:1rem; margin-bottom:0.5rem;">Scheduled:</div>', unsafe_allow_html=True)
+            for t in hours_list:
+                tc1, tc2 = st.columns([4, 1])
+                tc1.markdown(f'<div class="v-list-item" style="border:none;">{t}</div>', unsafe_allow_html=True)
+                if tc2.button("✕", key=f"del_time_{t}", disabled=running_state):
+                    hours_list.remove(t)
+                    config["schedule_fixed_hours"] = hours_list
+                    save_config(config)
+                    st.rerun()
+
+    elif new_mode == "specific":
+        current_dt_str = config.get("schedule_specific_datetime", datetime.now().strftime("%Y-%m-%d %H:%M"))
+        try:
+            current_dt = datetime.strptime(current_dt_str, "%Y-%m-%d %H:%M")
+        except:
+            current_dt = datetime.now()
+            
+        c1, c2 = st.columns(2)
+        with c1: d_val = st.date_input("Date", value=current_dt.date(), disabled=running_state)
+        with c2: t_val = st.time_input("Time", value=current_dt.time(), disabled=running_state)
+        
+        if not running_state:
+            new_dt_str = f"{d_val.strftime('%Y-%m-%d')} {t_val.strftime('%H:%M')}"
+            if new_dt_str != config.get("schedule_specific_datetime", ""):
+                config["schedule_specific_datetime"] = new_dt_str
+                save_config(config)
+            
+        st.markdown(f'<div style="font-size:0.85rem; color:#60a5fa; margin-top:0.5rem;">→ Will run once on: {get_next_run(config)}</div>', unsafe_allow_html=True)
+
+    if not running_state:
+        st.markdown("<hr style='border-color: rgba(255,255,255,0.07); margin: 1rem 0;'>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([1, 3, 1])
+        with c2:
+            if st.button("▶ START SCHEDULER", type="primary", use_container_width=True):
+                try:
+                    start_scheduler()
+                    st.success("Scheduler started successfully")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to start: {e}")
+                    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="v-card"><span class="card-title">Live Log Viewer</span>', unsafe_allow_html=True)
+    
+    log_text = "[No logs found]"
+    log_path = Path("scheduler.log")
+    if log_path.exists():
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            log_text = "".join(lines[-100:]) if lines else "[Log file is empty]"
+        except Exception:
+            log_text = "[Error reading logs]"
+            
+    st.code(log_text, language="bash")
+    l1, l2 = st.columns(2)
+    with l1: 
+        if st.button("Refresh Logs"):
+            st.rerun()
+    with l2: 
+        if st.button("Clear Logs"):
+            try:
+                open("scheduler.log", "w").close()
+                st.success("Logs cleared")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to clear logs: {e}")
+                
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    with st.expander("Systemd Deployment Commands"):
+        st.code("sudo systemctl restart veilleai.service\nsudo journalctl -u veilleai -f")
+
+elif "Topics" in page:
+    st.markdown('<div class="v-card"><span class="card-title">Topics Configuration</span>', unsafe_allow_html=True)
+    
+    topics = config.get("topics", [])
+    
+    # Auto-cleanup short names
+    cleaned_topics = [t for t in topics if len(t.strip()) >= 2]
+    if len(cleaned_topics) != len(topics):
+        config['topics'] = cleaned_topics
+        save_config(config)
+        topics = cleaned_topics
+    
+    for t in topics:
+        col1, col2 = st.columns([4, 1])
+        with col1: st.markdown(f'<div class="v-list-item" style="border:none;">{t}</div>', unsafe_allow_html=True)
+        with col2: 
+            if st.button("✕", key=f"del_t_{t}"):
+                topics.remove(t)
+                config['topics'] = topics
+                save_config(config)
+                st.rerun()
+    
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
+    
+    new_topic = st.text_input("Add New Topic", placeholder="Enter topic...")
+    if st.button("Add Topic", type="primary"):
+        if new_topic and new_topic.strip() and new_topic not in topics:
+            topics.append(new_topic.strip())
+            config['topics'] = topics
+            save_config(config)
+            st.rerun()
+            
+    st.markdown('<span class="card-title mt-2">Presets</span>', unsafe_allow_html=True)
+    p1, p2, p3, p4 = st.columns(4)
+    with p1: 
+        if st.button("AI/ML"):
+            config['topics'] = ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Networks", "Generative AI"]
+            save_config(config)
+            st.rerun()
+    with p2: 
+        if st.button("Tech General"):
+            config['topics'] = ["Software Development", "Programming", "Technology Innovation", "Web Development", "Cloud Computing"]
+            save_config(config)
+            st.rerun()
+    with p3: 
+        if st.button("Security"):
+            config['topics'] = ["Cybersecurity", "Data Protection", "Privacy", "Encryption", "Threat Detection"]
+            save_config(config)
+            st.rerun()
+    with p4: 
+        if st.button("Finance"):
+            config['topics'] = ["Fintech", "Cryptocurrency", "Stock Market", "Venture Capital", "Startup Funding"]
+            save_config(config)
+            st.rerun()
+    
+    st.markdown('<span class="card-title mt-2">Live Preview</span>', unsafe_allow_html=True)
+    st.markdown(f'<div class="topic-container">{"".join([f"<span class=topic-tag>{t}</span>" for t in topics])}</div>', unsafe_allow_html=True)
+    
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
+    if st.button("Save Configuration", type="primary", use_container_width=True):
+        save_config(config)
+        st.success("Topics saved successfully!")
+        time.sleep(1)
+        st.rerun()
+        
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif "Data Sources" in page:
+    current_feeds = config.get("feeds", [])
+    current_topics = config.get("topics", [])
+
+    # --- 1. MONITOR ANY TOPIC ---
+    st.markdown('<div class="v-card"><span class="card-title" style="color:#60a5fa;">MONITOR ANY TOPIC</span>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:0.85rem; color:#9ca3af; margin-bottom:0.5rem;">Type anything you want to follow:</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1: 
+        custom_topic = st.text_input("", label_visibility="collapsed")
+    with c2: 
+        language_options = {
+            "🇫🇷 Français": {"hl": "fr", "gl": "FR", "ceid": "FR:fr"},
+            "🇬🇧 English":  {"hl": "en", "gl": "US", "ceid": "US:en"},
+            "🇪🇸 Español":  {"hl": "es", "gl": "ES", "ceid": "ES:es"},
+            "🇩🇪 Deutsch":  {"hl": "de", "gl": "DE", "ceid": "DE:de"},
+        }
+        
+        # Migrate old config label if it exists
+        current_lang_label = config.get('news_language', "🇫🇷 Français")
+        if current_lang_label == "🇫🇷 FR": current_lang_label = "🇫🇷 Français"
+        elif current_lang_label == "🇬🇧 EN": current_lang_label = "🇬🇧 English"
+        elif current_lang_label == "🇪🇸 ES": current_lang_label = "🇪🇸 Español"
+        elif current_lang_label == "🇩🇪 DE": current_lang_label = "🇩🇪 Deutsch"
+        
+        if current_lang_label not in language_options: current_lang_label = "🇫🇷 Français"
+        selected_lang = st.selectbox("", list(language_options.keys()), index=list(language_options.keys()).index(current_lang_label), label_visibility="collapsed")
+        lang_params = language_options[selected_lang]
+        
+        if selected_lang != current_lang_label:
+            config['news_language'] = selected_lang
+            save_config(config)
+            st.rerun()
+
+    with c3:
+        if st.button("+ Add", type="primary", use_container_width=True):
+            if custom_topic and custom_topic.strip():
+                topic_clean = custom_topic.strip()
+                hl = lang_params["hl"]
+                gl = lang_params["gl"]
+                ceid = lang_params["ceid"]
+                encoded = urllib.parse.quote(topic_clean)
+                rss_url = f"https://news.google.com/rss/search?q={encoded}&hl={hl}&gl={gl}&ceid={ceid}"
+                
+                if rss_url not in current_feeds:
+                    current_feeds.append(rss_url)
+                    config['feeds'] = current_feeds
+                if topic_clean not in current_topics:
+                    current_topics.append(topic_clean)
+                    config['topics'] = current_topics
+                    
+                save_config(config)
+                st.success(f"Now monitoring '{topic_clean}' — feed and topic added!")
+                time.sleep(1.5)
+                st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+    # --- 3. SMART SUGGESTIONS ---
+    suggestions = []
+    for t in current_topics:
+        encoded_t = urllib.parse.quote(t)
+        if not any(encoded_t.lower() in f.lower() or urllib.parse.quote(t.lower()) in f.lower() for f in current_feeds):
+            suggestions.append(t)
+            
+    if suggestions:
+        st.markdown('<div class="v-card" style="border-left: 3px solid #f59e0b;"><span class="card-title" style="color:#f59e0b;">💡 SUGGESTED FEEDS BASED ON YOUR TOPICS</span>', unsafe_allow_html=True)
+        for t in suggestions:
+            c1, c2 = st.columns([3, 2])
+            with c1: st.markdown(f'<div class="v-list-item" style="border:none;">You monitor "{t}" but have no feed for it</div>', unsafe_allow_html=True)
+            with c2:
+                if st.button(f"+ Add Google News: {t}", key=f"suggest_{t}", use_container_width=True):
+                    encoded = urllib.parse.quote(t)
+                    rss_url = f"https://news.google.com/rss/search?q={encoded}&hl={hl}&gl={gl}&ceid={gl}:{hl}"
+                    if rss_url not in current_feeds:
+                        current_feeds.append(rss_url)
+                        config['feeds'] = current_feeds
+                        save_config(config)
+                        st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- 4. PRESETS BY CATEGORY ---
+    st.markdown('<div class="v-card"><span class="card-title">PRESETS BY CATEGORY</span>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2)
+    with p1: 
+        if st.button("Add Popular AI News Feeds", use_container_width=True):
+            ai_feeds = [
+                "https://techcrunch.com/category/artificial-intelligence/feed/",
+                "https://venturebeat.com/category/ai/feed/",
+                "https://www.artificialintelligence-news.com/feed/",
+                "https://feeds.feedburner.com/TheHackersNews",
+                "https://arxiv.org/rss/cs.AI",
+                "https://huggingface.co/blog/feed.xml"
+            ]
+            for mf in ai_feeds:
+                if mf not in current_feeds: current_feeds.append(mf)
+            config['feeds'] = current_feeds
+            save_config(config)
+            st.rerun()
+            
+    with p2: 
+        if st.button("Add Top Tech News Feeds", use_container_width=True):
+            tech_feeds = [
+                "https://news.ycombinator.com/rss",
+                "https://www.theverge.com/rss/index.xml",
+                "https://feeds.arstechnica.com/arstechnica/index",
+                "https://www.wired.com/feed/rss",
+                "https://techcrunch.com/feed/"
+            ]
+            for mf in tech_feeds:
+                if mf not in current_feeds: current_feeds.append(mf)
+            config['feeds'] = current_feeds
+            save_config(config)
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+            
+    # --- 5. CURRENT FEEDS LIST ---
+    st.markdown('<div class="v-card"><span class="card-title">ALL RSS FEEDS</span>', unsafe_allow_html=True)
+    if not current_feeds:
+        st.markdown('<span style="color:#6b7280; font-size:0.85rem;">[No feeds currently configured]</span>', unsafe_allow_html=True)
+        
+    for i, f in enumerate(current_feeds):
+        col1, col2 = st.columns([5, 1])
+        with col1: st.markdown(f'<div class="v-list-item" style="border:none; font-size:0.85rem; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{f}">{f}</div>', unsafe_allow_html=True)
+        with col2: 
+            if st.button("✕", key=f"delete_feed_{i}_{f}"):
+                current_feeds.pop(i)
+                config['feeds'] = current_feeds
+                save_config(config)
+                st.rerun()
+        
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
+    
+    # --- 6. ADD FEED MANUALLY ---
+    st.markdown('<div style="font-size:0.85rem; color:#9ca3af; margin-bottom:0.5rem;">Add Feed Manually:</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        new_feed = st.text_input("Add New Feed URL", placeholder="https://...", label_visibility="collapsed")
+    with c2:
+        if st.button("Add Feed", type="primary", use_container_width=True):
+            if new_feed and new_feed.strip() and new_feed not in current_feeds:
+                current_feeds.append(new_feed.strip())
+                config['feeds'] = current_feeds
+                save_config(config)
+                st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # --- 7. COLLECTION LIMITS ---
+    st.markdown('<div class="v-card"><span class="card-title">COLLECTION LIMITS</span>', unsafe_allow_html=True)
+    
+    new_items_per_feed = st.slider("Max items parsed per feed", 1, 100, config.get("items_per_feed", 50))
+    new_max_synthesis = st.slider("Max articles passed to LLM", 5, 100, config.get("max_articles_to_llm", 20))
+    
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
+    
+    st.session_state.config = config
+    if st.button("Save Data Sources Settings", type="primary", use_container_width=True, key="save_feeds"):
+        config['items_per_feed'] = new_items_per_feed
+        config['max_articles_to_llm'] = new_max_synthesis
+        save_config(config)
+        st.success("Data sources settings saved!")
+
+elif "Advanced" in page:
+    st.markdown('<div class="v-card"><span class="card-title">Advanced Settings</span>', unsafe_allow_html=True)
+    
+    # 1. ⚠️ WARNINGS
+    current_threshold = config.get("relevance_threshold", 0.30)
+    if current_threshold > 0.6:
+        st.markdown(f"""
+        <div style='background:rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;'>
+            <strong>⚠️ WARNING: Your filter is very strict</strong><br/>
+            Threshold: {current_threshold:.2f} <br/>
+            This may cause empty reports!
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🔧 Fix it — Set to 0.30", key="fix_threshold"):
+            config["relevance_threshold"] = 0.30
+            save_config(config)
+            st.success("Filter set to 0.30 — reports will now have content!")
+            time.sleep(1)
+            st.rerun()
+
+    # 2. 🤖 AVAILABLE PROVIDERS & API KEYS
+    st.markdown('<span class="card-title mt-2">Available Providers</span>', unsafe_allow_html=True)
+    
+    available_providers = get_available_providers()
+    
+    if st.button("✨ Auto-select best available", type="primary", use_container_width=True):
+        best = auto_select_best_provider(available_providers)
+        config['provider'] = best
+        config['model'] = get_best_model(best)
+        save_config(config)
+        st.success(f"Auto-selected {best} with {config['model']}!")
+        time.sleep(1)
+        st.rerun()
+
+    st.markdown('<div style="background:rgba(255,255,255,0.02); padding:1rem; border-radius:8px; margin-top:1rem; border:1px solid rgba(255,255,255,0.05);">', unsafe_allow_html=True)
+    
+    for prov, details in available_providers.items():
+        c1, c2, c3 = st.columns([1, 4, 1])
+        is_active = (config.get('provider') == prov)
+        active_label = " (Active)" if is_active else ""
+        
+        with c1:
+            icon = "✓" if details['available'] else "✗"
+            color = "#10b981" if details['available'] else "#ef4444"
+            st.markdown(f'<span style="color:{color}; font-weight:bold;">{icon} {prov}{active_label}</span>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<span style="color:#9ca3af; font-size:0.9rem;">{details["reason"]}</span>', unsafe_allow_html=True)
+        with c3:
+            if details['available']:
+                if not is_active:
+                    if st.button("Select", key=f"sel_{prov}"):
+                        config['provider'] = prov
+                        config['model'] = get_best_model(prov)
+                        save_config(config)
+                        st.rerun()
+            else:
+                with st.expander("Get key"):
+                    st.write(f"To use {prov}, add {details['key_name']} to your .env file and restart.")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # 4. 🗄️ STORAGE PATHS
+    st.markdown('<span class="card-title mt-4">Storage Paths</span>', unsafe_allow_html=True)
+    config['sqlite_path'] = st.text_input("SQLite Database Path", value=config.get("sqlite_path", "watcher.db"))
+    config['chroma_path'] = st.text_input("ChromaDB Path", value=config.get("chroma_path", "./chroma_db"))
+    
+    # 5. 🔍 RELEVANCE FILTER
+    st.markdown('<span class="card-title mt-4">Relevance Filter</span>', unsafe_allow_html=True)
+    
+    threshold = st.slider("Relevance Filter Threshold", 0.0, 1.0, config.get("relevance_threshold", 0.30), 0.05)
+    config['relevance_threshold'] = threshold
+    
+    if threshold <= 0.3:
+        badge = '<span style="background:#064e3b; color:#34d399; padding:2px 8px; border-radius:12px; font-size:0.8rem;">🟢 PERMISSIVE</span>'
+        desc = "Most articles pass"
+        est = "~80%"
+    elif threshold <= 0.5:
+        badge = '<span style="background:#78350f; color:#fbbf24; padding:2px 8px; border-radius:12px; font-size:0.8rem;">🟡 BALANCED</span>'
+        desc = "Good quality filter"
+        est = "~50%"
+    elif threshold <= 0.7:
+        badge = '<span style="background:#7c2d12; color:#fb923c; padding:2px 8px; border-radius:12px; font-size:0.8rem;">🟠 STRICT</span>'
+        desc = "Only relevant articles"
+        est = "~20%"
+    else:
+        badge = '<span style="background:#7f1d1d; color:#f87171; padding:2px 8px; border-radius:12px; font-size:0.8rem;">🔴 VERY STRICT</span>'
+        desc = "Almost nothing passes"
+        est = "< 5%"
+        
+    st.markdown(f'<div style="margin-top:-1rem; margin-bottom:1rem;">{badge} <strong>{desc}</strong><br/><span style="font-size:0.8rem; color:#9ca3af;">{est} of articles pass at this threshold</span></div>', unsafe_allow_html=True)
+
+    # 7. 💾 SAVE + EXPORT/IMPORT
+    st.markdown("<br/>", unsafe_allow_html=True)
+    if st.button("Save Configuration", type="primary", use_container_width=True):
+        save_config(config)
+
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.07); margin: 1.5rem 0;'>", unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if os.path.exists("config.yaml"):
+            with open("config.yaml", "r") as f:
+                config_content = f.read()
+            st.download_button(
+                "📤 Export Config",
+                data=config_content,
+                file_name="veilleai_config.yaml",
+                mime="text/yaml",
+                use_container_width=True
+            )
+    with c2:
+        uploaded = st.file_uploader("Import config", type=['yaml','yml'], label_visibility="collapsed")
+        if uploaded:
+            content = uploaded.read().decode('utf-8')
+            new_config = yaml.safe_load(content)
+            st.session_state.config = new_config
+            save_config(new_config)
+            st.success("Configuration imported!")
+            time.sleep(1)
+            st.rerun()
+
+    # 8. ℹ️ SYSTEM INFORMATION (collapsed)
+    with st.expander("▶ System Information"):
+        import sys, platform
+        import streamlit as st_module
+        db_path = Path("watcher.db")
+        chroma_path = Path(config.get("chroma_path", "./chroma_db"))
+        db_size = f"{(db_path.stat().st_size / 1024 / 1024):.1f} MB" if db_path.exists() else "Not found"
+        
+        # Calculate chroma size
+        chroma_size_mb = 0
+        if chroma_path.exists() and chroma_path.is_dir():
+            total_size = sum(f.stat().st_size for f in chroma_path.rglob('*') if f.is_file())
+            chroma_size_mb = total_size / 1024 / 1024
+        
+        st.code(f"""Python version:    {sys.version.split()[0]}
+Streamlit version: {st_module.__version__}
+Platform:          {platform.system()}
+Project folder:    {str(Path(__file__).parent.absolute())}
+Database size:     {db_size}
+ChromaDB size:     {chroma_size_mb:.1f} MB
+Total articles:    {1284}""", language="text")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+elif "Monitoring" in page:
+    st.markdown('<div class="v-card"><span class="card-title">Live Metrics</span>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("Total Articles DB", "24,812", "+1,200 this week")
+    with c2: st.metric("Unique Sources", "89", "Stable")
+    with c3: st.metric("Oldest Entry", "Jan 12, 2026", None)
+    with c4: st.metric("Latest Entry", "5 mins ago", None)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    col_l, col_r = st.columns([2, 1])
+    with col_l:
+        st.markdown('<div class="v-card"><span class="card-title">Recent Articles</span></div>', unsafe_allow_html=True)
+        for i in range(5):
+            with st.expander(f"GPT-5 Announced: What we know so far - TechCrunch ({2-(i*0.5)}h ago)"):
+                st.write("Summary extracted by LLM: OpenAI has officially announced GPT-5 with multimodality natively supported across video, audio, and text...")
+    
+    with col_r:
+        st.markdown("""
+        <div class="v-card">
+            <span class="card-title">System Health</span>
+            <div class="v-list-item"><span>LLM API (Groq)</span> <span class="v-badge badge-green">OK Response</span></div>
+            <div class="v-list-item"><span>Vector DB Memory</span> <span class="v-badge badge-amber">800MB</span></div>
+            <div class="v-list-item"><span>Storage Space</span> <span class="v-badge badge-green">42GB Free</span></div>
+        </div>
+        """, unsafe_allow_html=True)

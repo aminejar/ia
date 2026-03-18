@@ -1,0 +1,47 @@
+chroma_path: ./chroma_db
+feeds:
+- https://techcrunch.com/feed/
+- https://wired.com/feed/rss
+- https://techcrunch.com/category/artificial-intelligence/feed/
+- https://venturebeat.com/category/ai/feed/
+- https://feeds.feedburner.com/TheHackersNews
+- https://www.bleepingcomputer.com/feed/
+- https://arxiv.org/rss/cs.AI
+- https://arxiv.org/rss/cs.CR
+- https://www.nature.com/subjects/artificial-intelligence.rss
+- https://feeds.newscientist.com/science-news
+- https://www.artificialintelligence-news.com/feed/
+- https://huggingface.co/blog/feed.xml
+- https://news.ycombinator.com/rss
+- https://www.theverge.com/rss/index.xml
+- https://feeds.arstechnica.com/arstechnica/index
+- https://www.wired.com/feed/rss
+- https://news.google.com/rss/search?q=Messi&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Fintech&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Cryptocurrency&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Stock%20Market&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Venture%20Capital&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Startup%20Funding&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Art&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Swimming&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Gaming&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=llmldfsls&hl=fr&gl=FR&ceid=FR:fr
+items_per_feed: 15
+llm_enabled: true
+max_articles_to_llm: 18
+model: llama3-70b-8192
+news_language: "\U0001F1EB\U0001F1F7 Fran\xE7ais"
+provider: groq
+relevance_threshold: 0.6
+schedule_fixed_hours: []
+schedule_interval_minutes: 360
+schedule_mode: interval
+schedule_specific_datetime: 2026-03-18 01:00
+scheduler_frequency: 360
+sqlite_path: watcher.db
+topics:
+- Fintech
+- Cryptocurrency
+- Stock Market
+- Venture Capital
+- Startup Funding
