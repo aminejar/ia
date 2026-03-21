@@ -73,6 +73,9 @@ class SmartFilter:
             return False
     
     def match_article_to_topic(self, article, topic):
+        if article.get('skip_filter', False):
+            return True, 1.0, 'google_news_bypass'
+            
         # METHOD 1: Google News pre-filtered feed
         if self.is_from_google_news_topic(article, topic):
             return True, 1.0, 'google_news'

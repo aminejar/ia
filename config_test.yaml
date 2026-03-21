@@ -1,9 +1,9 @@
 chroma_path: ./chroma_db
 feeds:
-- aa
-items_per_feed: 44
+- https://test.rss
+items_per_feed: 61
 llm_enabled: true
-max_articles_to_llm: 48
+max_articles_to_llm: 65
 model: llama-3.3-70b-versatile
 news_language: 🇫🇷 Français
 provider: groq

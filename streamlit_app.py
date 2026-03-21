@@ -70,7 +70,7 @@ def auto_select_best_provider(available):
 
 def get_best_model(provider):
     best_models = {
-        'groq':      'llama3-70b-8192',
+        'groq':      'llama-3.3-70b-versatile',
         'gemini':    'gemini-2.0-flash',
         'together':  'meta-llama/Llama-3-70b-chat-hf',
         'openai':    'gpt-4o-mini',
@@ -79,7 +79,45 @@ def get_best_model(provider):
         'cohere':    'command-r',
         'ollama':    'llama3',
     }
-    return best_models.get(provider, 'llama3-70b-8192')
+    return best_models.get(provider, 'llama3')
+
+def show_friendly_error(error_info, config):
+    st.markdown(f"""
+<div style="background:rgba(239,68,68,0.1); border-left:3px solid #ef4444; border-radius:8px;padding:16px; margin:10px 0">
+  <div style="font-size:14px;font-weight:600; color:#f87171;margin-bottom:8px">
+    ✕ {error_info['title']}
+  </div>
+  <div style="font-size:13px;color:#94a3b8; margin-bottom:8px">
+    {error_info['message']}
+  </div>
+  <div style="font-size:12px;color:#64748b; white-space:pre-line">
+    {error_info['solution']}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+    
+    if error_info.get('action') and error_info['action'].startswith('switch_to_'):
+        new_provider = error_info['action'].replace('switch_to_', '')
+        if st.button(error_info.get('action_label', f"Passer à {new_provider.title()} maintenant"), type="primary"):
+            defaults = {
+                'groq':   'llama-3.3-70b-versatile',
+                'gemini': 'gemini-2.0-flash',
+            }
+            st.session_state.config['provider'] = new_provider
+            st.session_state.config['model'] = defaults.get(new_provider, 'llama3')
+            save_config(st.session_state.config)
+            st.success(f"Switched to {new_provider}! Relance le pipeline.")
+            time.sleep(1)
+            st.rerun()
+            
+    elif error_info.get('action') and error_info['action'].startswith('fix_model_'):
+        new_model = error_info['action'].replace('fix_model_', '')
+        if st.button(error_info.get('action_label', 'Corriger automatiquement'), type="primary"):
+            st.session_state.config['model'] = new_model
+            save_config(st.session_state.config)
+            st.success(f"Modèle changé vers {new_model}!")
+            time.sleep(1)
+            st.rerun()
 
 st.set_page_config(page_title="VeilleAI", layout="wide", initial_sidebar_state="expanded")
 
@@ -90,26 +128,62 @@ def local_css(file_name):
 local_css("style.css")
 
 # --- Configuration Management ---
-CONFIG_FILE = "config.yaml"
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r') as f:
-            return yaml.safe_load(f)
+def load_config_file():
+    try:
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+                print(f"Loaded config from: {CONFIG_PATH}")
+                print(f"Feeds: {len(config.get('feeds',[]))}")
+                print(f"Topics: {config.get('topics',[])}")
+                return config
+    except Exception as e:
+        print(f"Config error: {e}")
     return {}
 
 def save_config(config):
-    with open(CONFIG_FILE, 'w') as f:
-        yaml.dump(config, f)
-    st.success("Configuration saved explicitly!")
+    # Make sure these fields are saved
+    defaults = {
+        'provider': 'groq',
+        'model': 'llama-3.3-70b-versatile',
+        'llm_enabled': True,
+        'relevance_threshold': 0.25,
+        'items_per_feed': 10,
+        'max_articles_to_llm': 15,
+        'topics': [],
+        'feeds': [],
+        'schedule_mode': 'interval',
+        'schedule_interval_minutes': 360,
+    }
+    for k, v in defaults.items():
+        if k not in config:
+            config[k] = v
 
-if 'config' not in st.session_state:
-    st.session_state.config = load_config()
+    try:
+        if 'feeds' in config:
+            config['feeds'] = list(dict.fromkeys(config['feeds']))
+        if 'topics' in config:
+            config['topics'] = list(dict.fromkeys(config['topics']))
+            
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f,
+                      default_flow_style=False,
+                      allow_unicode=True)
+        return True
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Save error: {e}")
+        return False
+
+st.session_state.config = load_config_file()
 
 config = st.session_state.config
 
 # --- Sidebar ---
 with st.sidebar:
+    st.sidebar.caption(f"Config: {len(st.session_state.config.get('feeds',[]))} feeds")
     st.markdown("""
         <div class="sidebar-header">
             <div class="logo">Veille<span>AI</span></div>
@@ -304,7 +378,7 @@ if "Dashboard" in page:
         if st.button("↺ Refresh Data", use_container_width=True):
             st.cache_resource.clear()
             st.cache_data.clear()
-            st.session_state.config = load_config()
+            st.session_state.config = load_config_file()
             st.rerun()
             
         if st.button("⚙ Configure", use_container_width=True):
@@ -432,9 +506,9 @@ elif "Run Pipeline" in page:
             if d['available'] and p != active_prov:
                 with cols[col_idx % len(cols)]:
                     if st.button(f"✓ Switch to {p}", key=f"switch_to_{p}", use_container_width=True):
-                        config['provider'] = p
-                        config['model'] = get_best_model(p)
-                        save_config(config)
+                        st.session_state.config['provider'] = p
+                        st.session_state.config['model'] = get_best_model(p)
+                        save_config(st.session_state.config)
                         st.success(f"Switched to {p}!")
                         time.sleep(1)
                         st.rerun()
@@ -479,7 +553,10 @@ elif "Run Pipeline" in page:
                     cwd=cwd, env=env
                 )
                 
-                if result.returncode == 0:
+                error_str = result.stderr + "\n" + result.stdout
+                has_llm_error = "LLM Error" in error_str or "groq API error" in error_str or "400" in error_str or "429" in error_str
+
+                if result.returncode == 0 and not has_llm_error:
                     st.success("Pipeline completed successfully!")
                     
                     # Optional: metric counts could be parsed from stdout if needed
@@ -522,9 +599,18 @@ elif "Run Pipeline" in page:
                     else:
                         st.warning("Report completed, but no markdown files found in `reports/` directory.")
                 else:
-                    st.error("Pipeline failed.")
-                    with st.expander("View Error Logs", expanded=True):
-                        st.code(result.stderr, language="bash")
+                    st.error("Pipeline failed or encountered generating errors.")
+                    
+                    import sys
+                    from pathlib import Path
+                    sys.path.insert(0, str(Path(__file__).parent))
+                    from watcher.agents.synthesizer import get_friendly_error
+                    
+                    err_details = get_friendly_error(error_str, config.get('provider', ''))
+                    show_friendly_error(err_details, config)
+                    
+                    with st.expander("View Technical Logs", expanded=False):
+                        st.code(error_str, language="bash")
             except Exception as e:
                 st.error(f"Execution Error: {str(e)}")
             
@@ -877,8 +963,8 @@ elif "Topics" in page:
         with col2: 
             if st.button("✕", key=f"del_t_{t}"):
                 topics.remove(t)
-                config['topics'] = topics
-                save_config(config)
+                st.session_state.config['topics'] = topics
+                save_config(st.session_state.config)
                 st.rerun()
     
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
@@ -887,31 +973,31 @@ elif "Topics" in page:
     if st.button("Add Topic", type="primary"):
         if new_topic and new_topic.strip() and new_topic not in topics:
             topics.append(new_topic.strip())
-            config['topics'] = topics
-            save_config(config)
+            st.session_state.config['topics'] = topics
+            save_config(st.session_state.config)
             st.rerun()
             
     st.markdown('<span class="card-title mt-2">Presets</span>', unsafe_allow_html=True)
     p1, p2, p3, p4 = st.columns(4)
     with p1: 
         if st.button("AI/ML"):
-            config['topics'] = ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Networks", "Generative AI"]
-            save_config(config)
+            st.session_state.config['topics'] = ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Networks", "Generative AI"]
+            save_config(st.session_state.config)
             st.rerun()
     with p2: 
         if st.button("Tech General"):
-            config['topics'] = ["Software Development", "Programming", "Technology Innovation", "Web Development", "Cloud Computing"]
-            save_config(config)
+            st.session_state.config['topics'] = ["Software Development", "Programming", "Technology Innovation", "Web Development", "Cloud Computing"]
+            save_config(st.session_state.config)
             st.rerun()
     with p3: 
         if st.button("Security"):
-            config['topics'] = ["Cybersecurity", "Data Protection", "Privacy", "Encryption", "Threat Detection"]
-            save_config(config)
+            st.session_state.config['topics'] = ["Cybersecurity", "Data Protection", "Privacy", "Encryption", "Threat Detection"]
+            save_config(st.session_state.config)
             st.rerun()
     with p4: 
         if st.button("Finance"):
-            config['topics'] = ["Fintech", "Cryptocurrency", "Stock Market", "Venture Capital", "Startup Funding"]
-            save_config(config)
+            st.session_state.config['topics'] = ["Fintech", "Cryptocurrency", "Stock Market", "Venture Capital", "Startup Funding"]
+            save_config(st.session_state.config)
             st.rerun()
     
     st.markdown('<span class="card-title mt-2">Live Preview</span>', unsafe_allow_html=True)
@@ -919,7 +1005,7 @@ elif "Topics" in page:
     
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
     if st.button("Save Configuration", type="primary", use_container_width=True):
-        save_config(config)
+        save_config(st.session_state.config)
         st.success("Topics saved successfully!")
         time.sleep(1)
         st.rerun()
@@ -956,8 +1042,8 @@ elif "Data Sources" in page:
         lang_params = language_options[selected_lang]
         
         if selected_lang != current_lang_label:
-            config['news_language'] = selected_lang
-            save_config(config)
+            st.session_state.config['news_language'] = selected_lang
+            save_config(st.session_state.config)
             st.rerun()
 
     with c3:
@@ -972,12 +1058,12 @@ elif "Data Sources" in page:
                 
                 if rss_url not in current_feeds:
                     current_feeds.append(rss_url)
-                    config['feeds'] = current_feeds
+                    st.session_state.config['feeds'] = current_feeds
                 if topic_clean not in current_topics:
                     current_topics.append(topic_clean)
-                    config['topics'] = current_topics
+                    st.session_state.config['topics'] = current_topics
                     
-                save_config(config)
+                save_config(st.session_state.config)
                 st.success(f"Now monitoring '{topic_clean}' — feed and topic added!")
                 time.sleep(1.5)
                 st.rerun()
@@ -1003,8 +1089,8 @@ elif "Data Sources" in page:
                     rss_url = f"https://news.google.com/rss/search?q={encoded}&hl={hl}&gl={gl}&ceid={gl}:{hl}"
                     if rss_url not in current_feeds:
                         current_feeds.append(rss_url)
-                        config['feeds'] = current_feeds
-                        save_config(config)
+                        st.session_state.config['feeds'] = current_feeds
+                        save_config(st.session_state.config)
                         st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1023,8 +1109,8 @@ elif "Data Sources" in page:
             ]
             for mf in ai_feeds:
                 if mf not in current_feeds: current_feeds.append(mf)
-            config['feeds'] = current_feeds
-            save_config(config)
+            st.session_state.config['feeds'] = current_feeds
+            save_config(st.session_state.config)
             st.rerun()
             
     with p2: 
@@ -1038,8 +1124,8 @@ elif "Data Sources" in page:
             ]
             for mf in tech_feeds:
                 if mf not in current_feeds: current_feeds.append(mf)
-            config['feeds'] = current_feeds
-            save_config(config)
+            st.session_state.config['feeds'] = current_feeds
+            save_config(st.session_state.config)
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
             
@@ -1054,8 +1140,8 @@ elif "Data Sources" in page:
         with col2: 
             if st.button("✕", key=f"delete_feed_{i}_{f}"):
                 current_feeds.pop(i)
-                config['feeds'] = current_feeds
-                save_config(config)
+                st.session_state.config['feeds'] = current_feeds
+                save_config(st.session_state.config)
                 st.rerun()
         
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
@@ -1069,8 +1155,8 @@ elif "Data Sources" in page:
         if st.button("Add Feed", type="primary", use_container_width=True):
             if new_feed and new_feed.strip() and new_feed not in current_feeds:
                 current_feeds.append(new_feed.strip())
-                config['feeds'] = current_feeds
-                save_config(config)
+                st.session_state.config['feeds'] = current_feeds
+                save_config(st.session_state.config)
                 st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -1082,11 +1168,10 @@ elif "Data Sources" in page:
     
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
     
-    st.session_state.config = config
     if st.button("Save Data Sources Settings", type="primary", use_container_width=True, key="save_feeds"):
-        config['items_per_feed'] = new_items_per_feed
-        config['max_articles_to_llm'] = new_max_synthesis
-        save_config(config)
+        st.session_state.config['items_per_feed'] = new_items_per_feed
+        st.session_state.config['max_articles_to_llm'] = new_max_synthesis
+        save_config(st.session_state.config)
         st.success("Data sources settings saved!")
 
 elif "Advanced" in page:
@@ -1116,9 +1201,9 @@ elif "Advanced" in page:
     
     if st.button("✨ Auto-select best available", type="primary", use_container_width=True):
         best = auto_select_best_provider(available_providers)
-        config['provider'] = best
-        config['model'] = get_best_model(best)
-        save_config(config)
+        st.session_state.config['provider'] = best
+        st.session_state.config['model'] = get_best_model(best)
+        save_config(st.session_state.config)
         st.success(f"Auto-selected {best} with {config['model']}!")
         time.sleep(1)
         st.rerun()
@@ -1140,9 +1225,9 @@ elif "Advanced" in page:
             if details['available']:
                 if not is_active:
                     if st.button("Select", key=f"sel_{prov}"):
-                        config['provider'] = prov
-                        config['model'] = get_best_model(prov)
-                        save_config(config)
+                        st.session_state.config['provider'] = prov
+                        st.session_state.config['model'] = get_best_model(prov)
+                        save_config(st.session_state.config)
                         st.rerun()
             else:
                 with st.expander("Get key"):
@@ -1183,14 +1268,18 @@ elif "Advanced" in page:
     # 7. 💾 SAVE + EXPORT/IMPORT
     st.markdown("<br/>", unsafe_allow_html=True)
     if st.button("Save Configuration", type="primary", use_container_width=True):
+        st.session_state.config = config
         save_config(config)
+        st.success("Configuration saved explicitly!")
+        time.sleep(1)
+        st.rerun()
 
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07); margin: 1.5rem 0;'>", unsafe_allow_html=True)
     
     c1, c2 = st.columns(2)
     with c1:
-        if os.path.exists("config.yaml"):
-            with open("config.yaml", "r") as f:
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 config_content = f.read()
             st.download_button(
                 "📤 Export Config",
