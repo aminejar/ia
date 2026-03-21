@@ -1,13 +1,39 @@
 chroma_path: ./chroma_db
 feeds:
-- aa
-items_per_feed: 44
+- https://techcrunch.com/feed/
+- https://www.wired.com/feed/rss
+- https://www.theverge.com/rss/index.xml
+- https://feeds.arstechnica.com/arstechnica/index
+- https://news.ycombinator.com/rss
+- https://techcrunch.com/category/artificial-intelligence/feed/
+- https://venturebeat.com/category/ai/feed/
+- https://www.artificialintelligence-news.com/feed/
+- https://huggingface.co/blog/feed.xml
+- https://feeds.feedburner.com/TheHackersNews
+- https://www.bleepingcomputer.com/feed/
+- https://cointelegraph.com/rss
+- https://coindesk.com/arc/outboundfeeds/rss/
+- https://feeds.feedburner.com/venturebeat/SZY
+- https://news.google.com/rss/search?q=Fintech&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Cryptocurrency&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Stock+Market&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Venture+Capital&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Startup+Funding&hl=fr&gl=FR&ceid=FR:fr
+- https://arxiv.org/rss/cs.AI
+- https://news.google.com/rss/search?q=Threat+Detection&hl=fr&gl=FR&ceid=FR:f
+- https://news.google.com/rss/search?q=Threat+Detection&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Encryption&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Privacy&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Data+Protection&hl=fr&gl=FR&ceid=FR:fr
+- https://news.google.com/rss/search?q=Cybersecurity&hl=fr&gl=FR&ceid=FR:fr
+- https://krebsonsecurity.com/feed/
+items_per_feed: 30
 llm_enabled: true
-max_articles_to_llm: 48
+max_articles_to_llm: 56
 model: llama-3.3-70b-versatile
 news_language: 🇫🇷 Français
 provider: groq
-relevance_threshold: 0.4
+relevance_threshold: 0.5
 schedule_fixed_hours: []
 schedule_interval_minutes: 360
 schedule_mode: interval
@@ -15,8 +41,8 @@ schedule_specific_datetime: 2026-03-18 01:00
 scheduler_frequency: 360
 sqlite_path: watcher.db
 topics:
-- Fintech
-- Cryptocurrency
-- Stock Market
-- Venture Capital
-- Startup Funding
+- Cybersecurity
+- Data Protection
+- Privacy
+- Encryption
+- Threat Detection

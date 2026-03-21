@@ -53,10 +53,13 @@ class VectorStore:
                 self._vecs.append(np.array(e))
                 self._metas.append(metadatas.pop(0) if metadatas else {})
 
-    def query(self, embedding: List[float], n_results: int = 5) -> List[Tuple[str, float, dict]]:
+    def query(self, embedding: List[float], n_results: int = 50) -> List[Tuple[str, float, dict]]:
         """Return list of (id, score, metadata) ordered by descending similarity."""
         if self._is_chroma:
-            res = self.col.query(query_embeddings=[embedding], n_results=n_results)
+            n_res = min(n_results, self.col.count())
+            if n_res == 0:
+                return []
+            res = self.col.query(query_embeddings=[embedding], n_results=n_res)
             ids = res["ids"][0]
             dists = res.get("distances") and res.get("distances")[0]
             metadatas = res.get("metadatas") and res.get("metadatas")[0]

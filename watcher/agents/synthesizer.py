@@ -5,6 +5,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import urllib.parse
+from html.parser import HTMLParser
+
+def clean_text(text):
+    if not text:
+        return ''
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Remove HTML entities
+    text = text.replace('&amp;', '&')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&nbsp;', ' ')
+    text = text.replace('&#39;', "'")
+    text = text.replace('&quot;', '"')
+    # Clean whitespace
+    text = ' '.join(text.split())
+    return text[:200]
+
+def get_real_url(article):
+    url = article.get('url','') or \
+          article.get('link','') or ''
+    
+    # If it's a Google News RSS link
+    # try to get the real source URL
+    if 'news.google.com/rss/articles' in url:
+        # Try to get from feedparser's source
+        source_url = article.get('source_url','')
+        if source_url:
+            return source_url
+        # Otherwise return the google news link
+        # but display it differently
+        return url
+    return url
+
 def call_llm(prompt, config):
     def get_config_value(config, *keys, default=''):
         for key in keys:
@@ -63,46 +98,74 @@ def generate_topic_section(topic, articles, config):
     if not articles:
         return f"## {topic}\nAucun article trouvé.\n"
     
-    articles_text = ""
-    for i, art in enumerate(articles[:8], 1):
+    # Build articles list with details
+    articles_list = ""
+    for i, art in enumerate(articles, 1):
         title   = (art.get('title','') or '')[:100]
-        summary = (art.get('summary','') or '')[:150]
-        source  = art.get('source','')
-        articles_text += f"[{i}] {title}\n"
-        articles_text += f"Source: {source}\n"
-        articles_text += f"Résumé: {summary}\n\n"
-    
-    prompt = f"""Analyse ces articles sur le sujet "{topic}".
-    
-Articles:
-{articles_text}
-
-Écris en français une analyse de 3-4 phrases
-sur les développements clés concernant {topic}.
-Puis liste 3 points clés concrets tirés des articles.
-Puis liste les sources.
-
-Format EXACT à respecter:
-[2-3 phrases d'analyse]
-
-**Points clés:**
-• [point concret 1]
-• [point concret 2]  
-• [point concret 3]
-
-**Sources:** [noms des sources]
+        source  = art.get('source','') or ''
+        url     = get_real_url(art)
+        link_text = "🔗 Via Google Actualités" if 'news.google.com/rss/articles' in url else "🔗 Lire l'article"
+        summary = clean_text(
+            art.get('summary','') or 
+            art.get('description','') or 
+            art.get('content','') or ''
+        )
+        date    = (art.get('published','') or '')[:10]
+        score   = art.get('relevance_score', 0)
+        
+        score_emoji = '🟢' if score > 0.7 else '🟡' if score > 0.4 else '🔵'
+        
+        articles_list += f"""
+**{i}. {title}**
+- Source: {source} | Date: {date} | {score_emoji} Score: {score:.2f}
+- Résumé: {summary}
+- {link_text}: {url}
 """
     
-    try:
-        content = call_llm(prompt, config)
-        return f"## {topic} — {len(articles)} articles\n{content}\n"
+    # LLM prompt
+    articles_for_llm = ""
+    for i, art in enumerate(articles, 1):
+        title   = (art.get('title','') or '')[:80]
+        summary = clean_text(
+            art.get('summary','') or 
+            art.get('description','') or 
+            art.get('content','') or ''
+        )[:100]
+        source  = art.get('source','') or ''
+        articles_for_llm += f"[{i}] {title} ({source}): {summary}\n"
     
+    prompt = f"""Analyse ces articles sur "{topic}":
+{articles_for_llm}
+
+Écris en français:
+1. Analyse de 2-3 phrases sur {topic}
+2. 3 points clés CONCRETS tirés des articles
+3. Sources principales
+
+Format:
+[analyse]
+
+**Points clés:**
+- [point 1]
+- [point 2]
+- [point 3]
+
+**Sources:** [liste]"""
+    
+    try:
+        llm_content = call_llm(prompt, config)
     except Exception as e:
-        error_msg = f"LLM Error for {topic}: {str(e)}"
-        print(error_msg)
-        titles = [a.get('title','')[:80] for a in articles[:5]]
-        titles_str = "\n".join(f"• {t}" for t in titles)
-        return f"## {topic} — {len(articles)} articles\n\n**Erreur LLM:** `{error_msg}`\n\n{titles_str}\n"
+        llm_content = f"Erreur LLM: {e}"
+    
+    return f"""## {topic} — {len(articles)} articles
+
+{llm_content}
+
+### Articles analysés
+{articles_list}
+
+---
+"""
 
 def generate_trends(filtered_by_topic, articles):
     dominant = max(
@@ -150,9 +213,12 @@ def generate_report(filtered_by_topic, config, llm_client):
     
     for topic in topics:
         articles = filtered_by_topic.get(topic, [])
-        all_articles.extend(articles)
+        max_per_topic = int(config.get('max_articles_to_llm', 15))
+        top_articles = articles[:max_per_topic]
         
-        section_content = generate_topic_section(topic, articles, config)
+        all_articles.extend(top_articles)
+        
+        section_content = generate_topic_section(topic, top_articles, config)
         report_sections.append(section_content)
             
     # Executive Summary Generation
@@ -189,7 +255,6 @@ Topics: {', '.join(topics)} | Articles: {total_arts} | Sources: {all_sources}
 
 ---
 
-## Tendances de la semaine
 {trends}
 
 ---

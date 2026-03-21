@@ -2,6 +2,11 @@
 from pathlib import Path
 import os
 
+# Set working directory to script location
+os.chdir(Path(__file__).parent)
+
+print(f"Working directory: {os.getcwd()}")
+
 def load_env_file():
     env_path = Path('.env')
     if not env_path.exists():
@@ -45,11 +50,72 @@ from watcher.agents.filter import SmartFilter
 from watcher.agents.synthesizer import generate_report
 from watcher.agents.llm_api_adapter import APILLMAdapter
 
+import sqlite3
+
+def get_recent_articles_from_db(config, days=7):
+    db_path = config.get(
+        'sqlite_path',
+        config.get('database', 'watcher.db')
+    )
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("""
+            SELECT title, link as url, 
+                   published, summary, source
+            FROM items 
+            WHERE published >= date('now', '-7 days')
+            OR published >= datetime('now', '-7 days')
+            ORDER BY published DESC
+            LIMIT 200
+        """)
+        rows = c.fetchall()
+        conn.close()
+        articles = []
+        for row in rows:
+            articles.append({
+                'title':     row[0] or '',
+                'url':       row[1] or '',
+                'link':      row[1] or '',
+                'published': row[2] or '',
+                'summary':   row[3] or '',
+                'source':    row[4] or '',
+            })
+        safe_print(f"DB: {len(articles)} recent articles")
+        return articles
+    except Exception as e:
+        safe_print(f"DB error: {e}")
+        return []
+
 def collect_all_feeds(config):
-    db_path = config.get('database', 'watcher.db')
+    db_path = config.get(
+        'sqlite_path',
+        config.get('database', 'watcher.db')
+    )
     storage = Storage(db_path)
-    collector = CollectorAgent(storage=storage)
-    # The default CollectorAgent collects and persists, then returns a list
+    
+    pipeline_mode = os.environ.get("PIPELINE_MODE", "Keep existing")
+    if pipeline_mode == "Fresh start":
+        safe_print("Mode 'Fresh start': clearing database to fetch all articles...")
+        try:
+            cur = storage.conn.cursor()
+            cur.execute("DELETE FROM items")
+            storage.conn.commit()
+        except Exception as e:
+            safe_print(f"Error clearing db: {e}")
+    elif pipeline_mode == "Clear old >7 days":
+        safe_print("Mode 'Clear old >7 days': purging records older than 7 days...")
+        try:
+            cur = storage.conn.cursor()
+            cur.execute("DELETE FROM items WHERE fetched_at < date('now', '-7 days')")
+            storage.conn.commit()
+        except:
+            pass
+
+    collector = CollectorAgent(
+        storage=storage,
+        config=config
+    )
     return collector.collect_new()
 
 FINANCE_FEEDS = [
@@ -88,8 +154,27 @@ def run_pipeline(config):
     
     # Step 1: Collect articles
     safe_print("Step 1: Collecting articles...")
-    articles = collect_all_feeds(config)
-    safe_print(f"Collected: {len(articles)} articles")
+    new_articles = collect_all_feeds(config)
+    safe_print(f"New: {len(new_articles)} articles")
+
+    # Also get recent from DB
+    db_articles = get_recent_articles_from_db(config)
+    safe_print(f"From DB: {len(db_articles)} articles")
+
+    # Combine both
+    all_articles = new_articles + db_articles
+    # Remove duplicates by URL
+    seen_urls = set()
+    articles = []
+    for art in all_articles:
+        url = art.get('url','') or art.get('link','')
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            articles.append(art)
+        elif not url:
+            articles.append(art)
+
+    safe_print(f"Total unique: {len(articles)} articles")
     
     if len(articles) == 0:
         safe_print("ERROR: No articles collected!")
@@ -110,8 +195,10 @@ def run_pipeline(config):
     filtered_by_topic = smart_filter.filter_all(articles)
     
     # Log results
+    safe_print(f"Step 2 results:")
     for topic, arts in filtered_by_topic.items():
-        safe_print(f"  {topic}: {len(arts)} articles")
+        safe_print(f"  {topic}: {len(arts)} articles ready for LLM")
+    safe_print(f"Total for LLM: {sum(len(v) for v in filtered_by_topic.values())}")
     
     # Init LLM client
     def get_config_value(config, *keys, default=''):

@@ -177,13 +177,21 @@ def save_config(config):
         st.error(f"Save error: {e}")
         return False
 
-st.session_state.config = load_config_file()
+if 'config' not in st.session_state:
+    st.session_state.config = load_config_file()
 
 config = st.session_state.config
 
 # --- Sidebar ---
 with st.sidebar:
-    st.sidebar.caption(f"Config: {len(st.session_state.config.get('feeds',[]))} feeds")
+    st.sidebar.caption(
+        f"Feeds in memory: "
+        f"{len(st.session_state.config.get('feeds',[]))}"
+    )
+    st.sidebar.caption(
+        f"Feeds in file: "
+        f"{len(yaml.safe_load(open(CONFIG_PATH)).get('feeds',[]))}"
+    )
     st.markdown("""
         <div class="sidebar-header">
             <div class="logo">Veille<span>AI</span></div>
@@ -320,8 +328,12 @@ if "Dashboard" in page:
             <span class="card-title">Monitored Topics</span>
             <div class="topic-container">
         """, unsafe_allow_html=True)
-        # Render topics dynamically
-        for t in config.get("topics", []):
+        # Render topics dynamically from disk
+        saved_topics = []
+        if CONFIG_PATH.exists():
+            try: saved_topics = yaml.safe_load(open(CONFIG_PATH)).get("topics", [])
+            except: pass
+        for t in saved_topics:
             st.markdown(f'<span class="topic-tag">{t}</span>', unsafe_allow_html=True)
         st.markdown('</div></div>', unsafe_allow_html=True)
         
@@ -526,7 +538,10 @@ elif "Run Pipeline" in page:
     with chk4: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Topics Parsed</div>', unsafe_allow_html=True)
     
     st.markdown('<span class="card-title mt-2">Current Topics</span>', unsafe_allow_html=True)
-    active_topics = config.get('topics', [])
+    active_topics = []
+    if CONFIG_PATH.exists():
+        try: active_topics = yaml.safe_load(open(CONFIG_PATH)).get('topics', [])
+        except: pass
     if active_topics:
         st.markdown(f'<div class="topic-container" style="margin-bottom:1rem;">{"".join([f"<span class=topic-tag>{t}</span>" for t in active_topics])}</div>', unsafe_allow_html=True)
     else:
@@ -546,6 +561,7 @@ elif "Run Pipeline" in page:
             import subprocess
             try:
                 env = {**os.environ, **load_dotenv_vars()}
+                env["PIPELINE_MODE"] = mode
                 cwd = str(Path(__file__).parent)
                 result = subprocess.run(
                     ["python", "run_full_pipeline.py"],
@@ -948,33 +964,28 @@ elif "Scheduler" in page:
 elif "Topics" in page:
     st.markdown('<div class="v-card"><span class="card-title">Topics Configuration</span>', unsafe_allow_html=True)
     
-    topics = config.get("topics", [])
+    if 'topics' not in st.session_state.config:
+        st.session_state.config['topics'] = []
     
     # Auto-cleanup short names
-    cleaned_topics = [t for t in topics if len(t.strip()) >= 2]
-    if len(cleaned_topics) != len(topics):
-        config['topics'] = cleaned_topics
-        save_config(config)
-        topics = cleaned_topics
+    cleaned_topics = [t for t in st.session_state.config['topics'] if len(t.strip()) >= 2]
+    if len(cleaned_topics) != len(st.session_state.config['topics']):
+        st.session_state.config['topics'] = cleaned_topics
     
-    for t in topics:
+    for t in st.session_state.config['topics']:
         col1, col2 = st.columns([4, 1])
         with col1: st.markdown(f'<div class="v-list-item" style="border:none;">{t}</div>', unsafe_allow_html=True)
         with col2: 
             if st.button("✕", key=f"del_t_{t}"):
-                topics.remove(t)
-                st.session_state.config['topics'] = topics
-                save_config(st.session_state.config)
+                st.session_state.config['topics'].remove(t)
                 st.rerun()
     
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
     
     new_topic = st.text_input("Add New Topic", placeholder="Enter topic...")
     if st.button("Add Topic", type="primary"):
-        if new_topic and new_topic.strip() and new_topic not in topics:
-            topics.append(new_topic.strip())
-            st.session_state.config['topics'] = topics
-            save_config(st.session_state.config)
+        if new_topic and new_topic.strip() and new_topic not in st.session_state.config['topics']:
+            st.session_state.config['topics'].append(new_topic.strip())
             st.rerun()
             
     st.markdown('<span class="card-title mt-2">Presets</span>', unsafe_allow_html=True)
@@ -982,39 +993,35 @@ elif "Topics" in page:
     with p1: 
         if st.button("AI/ML"):
             st.session_state.config['topics'] = ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Networks", "Generative AI"]
-            save_config(st.session_state.config)
             st.rerun()
     with p2: 
         if st.button("Tech General"):
             st.session_state.config['topics'] = ["Software Development", "Programming", "Technology Innovation", "Web Development", "Cloud Computing"]
-            save_config(st.session_state.config)
             st.rerun()
     with p3: 
         if st.button("Security"):
             st.session_state.config['topics'] = ["Cybersecurity", "Data Protection", "Privacy", "Encryption", "Threat Detection"]
-            save_config(st.session_state.config)
             st.rerun()
     with p4: 
         if st.button("Finance"):
             st.session_state.config['topics'] = ["Fintech", "Cryptocurrency", "Stock Market", "Venture Capital", "Startup Funding"]
-            save_config(st.session_state.config)
             st.rerun()
     
     st.markdown('<span class="card-title mt-2">Live Preview</span>', unsafe_allow_html=True)
-    st.markdown(f'<div class="topic-container">{"".join([f"<span class=topic-tag>{t}</span>" for t in topics])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="topic-container">{"".join([f"<span class=topic-tag>{t}</span>" for t in st.session_state.config["topics"]])}</div>', unsafe_allow_html=True)
     
     st.markdown("<hr style='border-color: rgba(255,255,255,0.07);'>", unsafe_allow_html=True)
     if st.button("Save Configuration", type="primary", use_container_width=True):
         save_config(st.session_state.config)
-        st.success("Topics saved successfully!")
-        time.sleep(1)
-        st.rerun()
+        st.success("Saved!")
         
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif "Data Sources" in page:
-    current_feeds = config.get("feeds", [])
-    current_topics = config.get("topics", [])
+    if 'feeds' not in st.session_state.config:
+        st.session_state.config['feeds'] = []
+    if 'topics' not in st.session_state.config:
+        st.session_state.config['topics'] = []
 
     # --- 1. MONITOR ANY TOPIC ---
     st.markdown('<div class="v-card"><span class="card-title" style="color:#60a5fa;">MONITOR ANY TOPIC</span>', unsafe_allow_html=True)
@@ -1056,12 +1063,10 @@ elif "Data Sources" in page:
                 encoded = urllib.parse.quote(topic_clean)
                 rss_url = f"https://news.google.com/rss/search?q={encoded}&hl={hl}&gl={gl}&ceid={ceid}"
                 
-                if rss_url not in current_feeds:
-                    current_feeds.append(rss_url)
-                    st.session_state.config['feeds'] = current_feeds
-                if topic_clean not in current_topics:
-                    current_topics.append(topic_clean)
-                    st.session_state.config['topics'] = current_topics
+                if rss_url not in st.session_state.config['feeds']:
+                    st.session_state.config['feeds'].append(rss_url)
+                if topic_clean not in st.session_state.config['topics']:
+                    st.session_state.config['topics'].append(topic_clean)
                     
                 save_config(st.session_state.config)
                 st.success(f"Now monitoring '{topic_clean}' — feed and topic added!")
@@ -1073,9 +1078,9 @@ elif "Data Sources" in page:
 
     # --- 3. SMART SUGGESTIONS ---
     suggestions = []
-    for t in current_topics:
+    for t in st.session_state.config['topics']:
         encoded_t = urllib.parse.quote(t)
-        if not any(encoded_t.lower() in f.lower() or urllib.parse.quote(t.lower()) in f.lower() for f in current_feeds):
+        if not any(encoded_t.lower() in f.lower() or urllib.parse.quote(t.lower()) in f.lower() for f in st.session_state.config['feeds']):
             suggestions.append(t)
             
     if suggestions:
@@ -1087,9 +1092,8 @@ elif "Data Sources" in page:
                 if st.button(f"+ Add Google News: {t}", key=f"suggest_{t}", use_container_width=True):
                     encoded = urllib.parse.quote(t)
                     rss_url = f"https://news.google.com/rss/search?q={encoded}&hl={hl}&gl={gl}&ceid={gl}:{hl}"
-                    if rss_url not in current_feeds:
-                        current_feeds.append(rss_url)
-                        st.session_state.config['feeds'] = current_feeds
+                    if rss_url not in st.session_state.config['feeds']:
+                        st.session_state.config['feeds'].append(rss_url)
                         save_config(st.session_state.config)
                         st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1108,8 +1112,7 @@ elif "Data Sources" in page:
                 "https://huggingface.co/blog/feed.xml"
             ]
             for mf in ai_feeds:
-                if mf not in current_feeds: current_feeds.append(mf)
-            st.session_state.config['feeds'] = current_feeds
+                if mf not in st.session_state.config['feeds']: st.session_state.config['feeds'].append(mf)
             save_config(st.session_state.config)
             st.rerun()
             
@@ -1123,24 +1126,22 @@ elif "Data Sources" in page:
                 "https://techcrunch.com/feed/"
             ]
             for mf in tech_feeds:
-                if mf not in current_feeds: current_feeds.append(mf)
-            st.session_state.config['feeds'] = current_feeds
+                if mf not in st.session_state.config['feeds']: st.session_state.config['feeds'].append(mf)
             save_config(st.session_state.config)
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
             
     # --- 5. CURRENT FEEDS LIST ---
     st.markdown('<div class="v-card"><span class="card-title">ALL RSS FEEDS</span>', unsafe_allow_html=True)
-    if not current_feeds:
+    if not st.session_state.config['feeds']:
         st.markdown('<span style="color:#6b7280; font-size:0.85rem;">[No feeds currently configured]</span>', unsafe_allow_html=True)
         
-    for i, f in enumerate(current_feeds):
+    for i, f in enumerate(st.session_state.config['feeds']):
         col1, col2 = st.columns([5, 1])
         with col1: st.markdown(f'<div class="v-list-item" style="border:none; font-size:0.85rem; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{f}">{f}</div>', unsafe_allow_html=True)
         with col2: 
             if st.button("✕", key=f"delete_feed_{i}_{f}"):
-                current_feeds.pop(i)
-                st.session_state.config['feeds'] = current_feeds
+                st.session_state.config['feeds'].pop(i)
                 save_config(st.session_state.config)
                 st.rerun()
         
@@ -1153,9 +1154,8 @@ elif "Data Sources" in page:
         new_feed = st.text_input("Add New Feed URL", placeholder="https://...", label_visibility="collapsed")
     with c2:
         if st.button("Add Feed", type="primary", use_container_width=True):
-            if new_feed and new_feed.strip() and new_feed not in current_feeds:
-                current_feeds.append(new_feed.strip())
-                st.session_state.config['feeds'] = current_feeds
+            if new_feed and new_feed.strip() and new_feed not in st.session_state.config['feeds']:
+                st.session_state.config['feeds'].append(new_feed.strip())
                 save_config(st.session_state.config)
                 st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)

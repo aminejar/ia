@@ -79,6 +79,33 @@ def fetch_feed_with_timeout(url, timeout=10):
     finally:
         socket.setdefaulttimeout(None)
 
+def _fetch_summary_from_url(url: str, timeout: int = 5) -> str:
+    """Fetch real article URL and extract first 500 chars if summary is empty."""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Remove script, style, nav, footer, ads, etc.
+        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'noscript']):
+            element.decompose()
+            
+        # Extract text and clean up whitespaces
+        text = soup.get_text(separator=' ', strip=True)
+        return text[:500]
+        
+    except Exception as e:
+        logger.debug(f"Failed to fetch summary from webpage {url}: {e}")
+        return ""
+
 def fetch_rss(feed_url: str, max_items: int = 10) -> list[dict]:
     try:
         import feedparser
@@ -93,11 +120,20 @@ def fetch_rss(feed_url: str, max_items: int = 10) -> list[dict]:
 
     items = []
     source = parsed.feed.get("title") if getattr(parsed, "feed", None) else feed_url
+    import re
     for entry in parsed.entries[:max_items]:
         summary = entry.get("summary", "")
         content = _extract_content(entry)
         link = entry.get("link", "")
         
+        # If summary is too short, try fetching from the real page
+        clean_summary = re.sub(r'<[^>]+>', '', summary).strip()
+        if len(clean_summary) < 50 and link:
+            logger.debug(f"Summary too short, fetching real page: {link}")
+            new_summary = _fetch_summary_from_url(link, timeout=5)
+            if new_summary:
+                summary = new_summary
+                
         # If content is too short, try fetching full article
         if len(content) < 200 and link:
             logger.debug(f"Fetching full content for: {entry.get('title', 'Unknown')}")

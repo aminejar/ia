@@ -21,8 +21,9 @@ class CollectorAgent:
     items (as stored) which can then be passed to a filtering agent.
     """
 
-    def __init__(self, storage=None):
+    def __init__(self, storage=None, config=None):
         self.storage = storage
+        self.config = config or {}
 
     def collect_new(self) -> List[Dict]:
         """Collect from configured feeds and APIs and return only new items.
@@ -39,7 +40,7 @@ class CollectorAgent:
             logger.error(f"Failed to import collectors or config: {e}")
             return []
 
-        config = load_config() or {}
+        config = self.config or load_config() or {}
         feeds = config.get("feeds", [])
         apis = config.get("apis", [])
         max_feed = config.get("max_items_per_feed", 10)
