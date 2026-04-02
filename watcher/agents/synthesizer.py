@@ -100,7 +100,8 @@ def generate_topic_section(topic, articles, config):
     
     # Build articles list with details
     articles_list = ""
-    for i, art in enumerate(articles, 1):
+    display_articles = [a for a in articles if a.get('relevance_score', 0) >= 0.60][:5]
+    for i, art in enumerate(display_articles, 1):
         title   = (art.get('title','') or '')[:100]
         source  = art.get('source','') or ''
         url     = get_real_url(art)

@@ -174,6 +174,26 @@ def run_pipeline(config):
         elif not url:
             articles.append(art)
 
+    from datetime import datetime, timedelta
+    cutoff = datetime.now() - timedelta(days=30)
+    
+    recent_articles = []
+    for art in articles:
+        try:
+            pub = art.get('published','')
+            if pub:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(pub)
+                dt = dt.replace(tzinfo=None)
+                if dt >= cutoff:
+                    recent_articles.append(art)
+            else:
+                recent_articles.append(art)
+        except:
+            recent_articles.append(art)
+            
+    articles = recent_articles
+    safe_print(f"Recent articles (30 days): {len(articles)}")
     safe_print(f"Total unique: {len(articles)} articles")
     
     if len(articles) == 0:
@@ -193,6 +213,16 @@ def run_pipeline(config):
     safe_print("Step 2: Filtering by topic...")
     smart_filter = SmartFilter(topics, threshold)
     filtered_by_topic = smart_filter.filter_all(articles)
+    
+    seen_urls = set()
+    for topic in topics:
+        unique_articles = []
+        for art in filtered_by_topic.get(topic, []):
+            url = art.get('url','') or art.get('link','')
+            if url not in seen_urls:
+                seen_urls.add(url)
+                unique_articles.append(art)
+        filtered_by_topic[topic] = unique_articles
     
     # Log results
     safe_print(f"Step 2 results:")

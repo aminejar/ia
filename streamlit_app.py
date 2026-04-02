@@ -267,14 +267,28 @@ with st.sidebar:
         </div>
     """, unsafe_allow_html=True)
 
+def _header_article_count():
+    db_path = config.get('sqlite_path', 'watcher.db')
+    if not Path(db_path).exists(): return 0
+    try:
+        import sqlite3
+        with sqlite3.connect(db_path) as conn:
+            return conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    except:
+        return 0
+
+article_count = _header_article_count()
+rss_count = len(config.get('feeds', []))
+prov_model = f"{config.get('provider', 'N/A').upper()} · {config.get('model', 'N/A')}"
+
 # --- Top Header ---
-st.markdown("""
+st.markdown(f"""
     <div class="top-header">
         <div class="wordmark">VeilleAI</div>
         <div class="header-right">
-            <span class="v-badge badge-blue">GROQ · llama3-70b</span>
-            <span class="v-badge badge-blue">1284 articles</span>
-            <span class="v-badge badge-blue">4 feeds</span>
+            <span class="v-badge badge-blue">{prov_model}</span>
+            <span class="v-badge badge-blue">{article_count} articles</span>
+            <span class="v-badge badge-blue">{rss_count} feeds</span>
         </div>
     </div>
 """, unsafe_allow_html=True)
@@ -285,39 +299,39 @@ if "Dashboard" in page:
     # Stat Cards
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown("""
+        st.markdown(f"""
         <div class="v-card stat-card">
             <div class="stat-accent accent-blue"></div>
             <span class="card-title">Total Articles</span>
-            <div class="stat-number blue">24,812</div>
-            <div class="stat-subtitle">Last 30 days</div>
+            <div class="stat-number blue">{article_count}</div>
+            <div class="stat-subtitle">In Database</div>
         </div>
         """, unsafe_allow_html=True)
     with c2:
-        st.markdown("""
+        st.markdown(f"""
         <div class="v-card stat-card">
             <div class="stat-accent accent-green"></div>
             <span class="card-title">Active Sources</span>
-            <div class="stat-number">124</div>
+            <div class="stat-number">{rss_count}</div>
             <div class="stat-subtitle">Connected</div>
         </div>
         """, unsafe_allow_html=True)
     with c3:
-        st.markdown("""
+        st.markdown(f"""
         <div class="v-card stat-card">
             <div class="stat-accent accent-amber"></div>
             <span class="card-title">Topics</span>
-            <div class="stat-number">18</div>
+            <div class="stat-number">{len(config.get('topics', []))}</div>
             <div class="stat-subtitle">Monitored</div>
         </div>
         """, unsafe_allow_html=True)
     with c4:
-        st.markdown("""
+        st.markdown(f"""
         <div class="v-card stat-card">
             <div class="stat-accent accent-gray"></div>
             <span class="card-title">RSS Feeds</span>
-            <div class="stat-number">42</div>
-            <div class="stat-subtitle">RSS Feeds</div>
+            <div class="stat-number">{rss_count}</div>
+            <div class="stat-subtitle">Configured</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -351,7 +365,7 @@ if "Dashboard" in page:
             except (ValueError, OSError):
                 sched_status = '<span class="v-badge badge-red">STALE PID</span>'
         
-        interval = config.get("scheduler_frequency", 60)
+        interval = config.get("schedule_interval_minutes", config.get("scheduler_frequency", 60))
         h, m = divmod(interval, 60)
         interval_text = f"Every {h}h {m}m" if h > 0 else f"Every {m} mins"
 
@@ -534,8 +548,18 @@ elif "Run Pipeline" in page:
         else:
             st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #ef4444; color:#f87171;">✗ API Key Missing</div>', unsafe_allow_html=True)
     with chk2: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Database Writable</div>', unsafe_allow_html=True)
-    with chk3: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ RSS Feeds Online</div>', unsafe_allow_html=True)
-    with chk4: st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Topics Parsed</div>', unsafe_allow_html=True)
+    
+    with chk3: 
+        if len(config.get('feeds', [])) > 0:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ RSS Feeds Online</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #ef4444; color:#f87171;">✗ No RSS Feeds</div>', unsafe_allow_html=True)
+            
+    with chk4: 
+        if len(config.get('topics', [])) > 0:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #10b981; color:#34d399;">✓ Topics Parsed</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="v-alert" style="background:transparent; border:1px solid #ef4444; color:#f87171;">✗ No Topics</div>', unsafe_allow_html=True)
     
     st.markdown('<span class="card-title mt-2">Current Topics</span>', unsafe_allow_html=True)
     active_topics = []
@@ -1319,32 +1343,69 @@ Platform:          {platform.system()}
 Project folder:    {str(Path(__file__).parent.absolute())}
 Database size:     {db_size}
 ChromaDB size:     {chroma_size_mb:.1f} MB
-Total articles:    {1284}""", language="text")
+Total articles:    {article_count}""", language="text")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif "Monitoring" in page:
+    db_path = config.get('sqlite_path', 'watcher.db')
+    try:
+        import sqlite3
+        with sqlite3.connect(db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM items")
+            total_articles = c.fetchone()[0]
+            
+            c.execute("SELECT COUNT(DISTINCT source) FROM items")
+            unique_sources = c.fetchone()[0]
+            
+            c.execute("SELECT MIN(published) FROM items")
+            oldest = c.fetchone()[0] or 'N/A'
+            if oldest != 'N/A':
+                from datetime import datetime
+                try: oldest = datetime.fromisoformat(oldest.replace('Z', '+00:00')).strftime('%b %d, %Y')
+                except: pass
+            
+            c.execute("SELECT MAX(published) FROM items")
+            latest = c.fetchone()[0] or 'N/A'
+            if latest != 'N/A':
+                from datetime import datetime
+                try: latest = datetime.fromisoformat(latest.replace('Z', '+00:00')).strftime('%b %d, %Y %H:%M')
+                except: pass
+            
+            c.execute("SELECT title, summary, source, published FROM items ORDER BY published DESC LIMIT 5")
+            recent_articles = c.fetchall()
+            
+    except:
+        total_articles = 0
+        unique_sources = 0
+        oldest = 'N/A'
+        latest = 'N/A'
+        recent_articles = []
+
     st.markdown('<div class="v-card"><span class="card-title">Live Metrics</span>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("Total Articles DB", "24,812", "+1,200 this week")
-    with c2: st.metric("Unique Sources", "89", "Stable")
-    with c3: st.metric("Oldest Entry", "Jan 12, 2026", None)
-    with c4: st.metric("Latest Entry", "5 mins ago", None)
+    with c1: st.metric("Total Articles DB", str(total_articles))
+    with c2: st.metric("Unique Sources", str(unique_sources))
+    with c3: st.metric("Oldest Entry", str(oldest))
+    with c4: st.metric("Latest Entry", str(latest))
     st.markdown('</div>', unsafe_allow_html=True)
     
     col_l, col_r = st.columns([2, 1])
     with col_l:
         st.markdown('<div class="v-card"><span class="card-title">Recent Articles</span></div>', unsafe_allow_html=True)
-        for i in range(5):
-            with st.expander(f"GPT-5 Announced: What we know so far - TechCrunch ({2-(i*0.5)}h ago)"):
-                st.write("Summary extracted by LLM: OpenAI has officially announced GPT-5 with multimodality natively supported across video, audio, and text...")
+        if not recent_articles:
+            st.info("No articles found in database.")
+        for title, summary, source, pub in recent_articles:
+            with st.expander(f"{title} - {source} ({pub})"):
+                st.write(summary if summary else "No summary available.")
     
     with col_r:
         st.markdown("""
         <div class="v-card">
             <span class="card-title">System Health</span>
-            <div class="v-list-item"><span>LLM API (Groq)</span> <span class="v-badge badge-green">OK Response</span></div>
-            <div class="v-list-item"><span>Vector DB Memory</span> <span class="v-badge badge-amber">800MB</span></div>
-            <div class="v-list-item"><span>Storage Space</span> <span class="v-badge badge-green">42GB Free</span></div>
+            <div class="v-list-item"><span>LLM API (Provider)</span> <span class="v-badge badge-green">OK Response</span></div>
+            <div class="v-list-item"><span>Vector DB Memory</span> <span class="v-badge badge-amber">N/A</span></div>
+            <div class="v-list-item"><span>Storage Space</span> <span class="v-badge badge-green">Active</span></div>
         </div>
         """, unsafe_allow_html=True)

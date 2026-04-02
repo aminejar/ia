@@ -80,7 +80,7 @@ def fetch_feed_with_timeout(url, timeout=10):
         socket.setdefaulttimeout(None)
 
 def _fetch_summary_from_url(url: str, timeout: int = 5) -> str:
-    """Fetch real article URL and extract first 500 chars if summary is empty."""
+    """Fetch real article URL and extract first 300 words if summary is empty."""
     try:
         import requests
         from bs4 import BeautifulSoup
@@ -100,7 +100,8 @@ def _fetch_summary_from_url(url: str, timeout: int = 5) -> str:
             
         # Extract text and clean up whitespaces
         text = soup.get_text(separator=' ', strip=True)
-        return text[:500]
+        words = text.split()
+        return ' '.join(words[:300])
         
     except Exception as e:
         logger.debug(f"Failed to fetch summary from webpage {url}: {e}")

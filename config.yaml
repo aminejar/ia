@@ -35,14 +35,14 @@ news_language: 🇫🇷 Français
 provider: groq
 relevance_threshold: 0.5
 schedule_fixed_hours: []
-schedule_interval_minutes: 360
-schedule_mode: interval
+schedule_interval_minutes: 420
+schedule_mode: fixed_hour
 schedule_specific_datetime: 2026-03-18 01:00
 scheduler_frequency: 360
 sqlite_path: watcher.db
 topics:
-- Cybersecurity
-- Data Protection
-- Privacy
-- Encryption
-- Threat Detection
+- Fintech
+- Cryptocurrency
+- Stock Market
+- Venture Capital
+- Startup Funding
