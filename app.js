@@ -5,14 +5,14 @@ const pages = {
                 <div class="card stat-card">
                     <div class="stat-accent accent-blue"></div>
                     <span class="section-title">Total Articles</span>
-                    <div class="stat-number blue">24,812</div>
-                    <div class="stat-subtitle">+12% from last week</div>
+                    <div class="stat-number blue" id="total-article-count">0</div>
+                    <div class="stat-subtitle">From database</div>
                 </div>
                 <div class="card stat-card">
                     <div class="stat-accent accent-green"></div>
                     <span class="section-title">Active Sources</span>
-                    <div class="stat-number">124</div>
-                    <div class="stat-subtitle">All systems operational</div>
+                    <div class="stat-number" id="active-source-count">0</div>
+                    <div class="stat-subtitle">Configured feeds</div>
                 </div>
                 <div class="card stat-card">
                     <div class="stat-accent accent-amber"></div>
@@ -106,6 +106,12 @@ const pages = {
                             <span class="badge badge-blue">PDF</span>
                         </div>
                     </div>
+                </div>
+            </div>
+            <div class="card" id="recent-articles-section">
+                <span class="section-title">Collected Articles</span>
+                <div id="recent-articles-list" class="report-list">
+                    <div class="report-row"><div class="report-info"><div class="report-name">Loading articles...</div></div></div>
                 </div>
             </div>
         </div>
@@ -296,6 +302,64 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    async function refreshDashboardMetrics() {
+        try {
+            const resp = await fetch('/api/article-count', {cache: 'no-store'});
+            if (!resp.ok) {
+                console.warn('Dashboard API not available', resp.status);
+                return;
+            }
+            const json = await resp.json();
+            const count = Number(json.articles || 0);
+            const feeds = Number(json.feeds || 0);
+
+            const totalEl = document.getElementById('total-article-count');
+            if (totalEl) totalEl.textContent = count.toLocaleString();
+
+            const headerEl = document.getElementById('header-article-count');
+            if (headerEl) headerEl.textContent = `${count.toLocaleString()} articles`;
+
+            const feedEl = document.getElementById('active-source-count');
+            if (feedEl) feedEl.textContent = feeds.toLocaleString();
+
+            const headerFeedEl = document.getElementById('header-feed-count');
+            if (headerFeedEl) headerFeedEl.textContent = `${feeds.toLocaleString()} feeds`;
+        } catch (error) {
+            console.warn('Error fetching dashboard metrics', error);
+        }
+    }
+
+    async function refreshRecentArticles() {
+        try {
+            const resp = await fetch('/api/recent-articles', {cache: 'no-store'});
+            if (!resp.ok) return;
+            const articles = await resp.json();
+            const listEl = document.getElementById('recent-articles-list');
+            if (listEl && articles.length > 0) {
+                listEl.innerHTML = articles.map(art => `
+                    <div class="report-row">
+                        <div class="report-info">
+                            <div class="report-date">${art.source || 'Unknown'} · ${art.published || ''}</div>
+                            <div class="report-name"><a href="${art.url || '#'}" target="_blank" style="color:inherit; text-decoration:none;">${art.title}</a></div>
+                        </div>
+                    </div>
+                `).join('');
+            } else if (listEl) {
+                listEl.innerHTML = '<div class="report-row"><div class="report-info"><div class="report-name">No articles collected yet.</div></div></div>';
+            }
+        } catch (error) {
+            console.warn('Error fetching recent articles', error);
+        }
+    }
+
     // Initial load
     loadPage('dashboard');
+    refreshDashboardMetrics();
+    refreshRecentArticles();
+
+    // refresh every 60 seconds
+    setInterval(() => {
+        refreshDashboardMetrics();
+        refreshRecentArticles();
+    }, 60000);
 });

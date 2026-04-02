@@ -41,8 +41,8 @@ schedule_specific_datetime: 2026-03-18 01:00
 scheduler_frequency: 360
 sqlite_path: watcher.db
 topics:
-- Fintech
-- Cryptocurrency
-- Stock Market
-- Venture Capital
-- Startup Funding
+- Cybersecurity
+- Data Protection
+- Privacy
+- Encryption
+- Threat Detection
